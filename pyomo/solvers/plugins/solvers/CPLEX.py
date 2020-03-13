@@ -525,6 +525,7 @@ class CPLEXSHELL(ILMLicensedSystemCallSolver):
                         TerminationCondition.optimal,
                         TerminationCondition.infeasible,
                         TerminationCondition.maxTimeLimit,
+                        TerminationCondition.maxDetTimeLimit,
                         TerminationCondition.noSolution,
                         TerminationCondition.unbounded,
                     }
@@ -569,6 +570,8 @@ class CPLEXSHELL(ILMLicensedSystemCallSolver):
                 # technically, I'm not sure if this is CPLEX user time or user+system - CPLEX doesn't appear
                 # to differentiate, and I'm not sure we can always provide a break-down.
                 results.solver.user_time = float(tokens[3])
+            elif len(tokens) >= 4 and tokens[0] == "Deterministic" and tokens[1] == "time" and tokens[2] == "=":
+                results.solver.deterministic_time = float(tokens[3])
             elif len(tokens) >= 4 and tokens[0] == "Primal" and tokens[1] == "simplex" and tokens[3] == "Optimal:":
                 results.solver.termination_condition = TerminationCondition.optimal
                 results.solver.termination_message = ' '.join(tokens)
@@ -594,6 +597,11 @@ class CPLEXSHELL(ILMLicensedSystemCallSolver):
                 # handle processing when the time limit has been exceeded, and we have a feasible solution.
                 results.solver.status = SolverStatus.ok
                 results.solver.termination_condition = TerminationCondition.maxTimeLimit
+                results.solver.termination_message = ' '.join(tokens)
+            elif len(tokens) >= 10 and tokens[0] == "MIP" and tokens[2] == "Deterministic" and tokens[3] == "time" and tokens[4] == "limit" and tokens[7] == "feasible:":
+                # handle processing when the deterministic time limit has been exceeded, and we have a feasible solution.
+                results.solver.status = SolverStatus.ok
+                results.solver.termination_condition = TerminationCondition.maxDetTimeLimit
                 results.solver.termination_message = ' '.join(tokens)
             elif len(tokens) >= 6 and tokens[0] == "MIP" and tuple(tokens[5:]) == ('no', 'integer', 'solution.'):
                 results.solver.termination_condition = TerminationCondition.noSolution
@@ -900,8 +908,8 @@ class CPLEXSHELL(ILMLicensedSystemCallSolver):
                                                         #TerminationCondition.maxEvaluations,
                                                         TerminationCondition.other]:
                 results.solution.insert(soln)
-            elif (results.solver.termination_condition is \
-                  TerminationCondition.maxTimeLimit) and \
+            elif (results.solver.termination_condition in
+                  (TerminationCondition.maxTimeLimit, TerminationCondition.maxDetTimeLimit)) and \
                   (soln.status is not SolutionStatus.infeasible):
                 results.solution.insert(soln)
 
