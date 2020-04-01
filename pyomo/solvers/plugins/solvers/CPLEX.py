@@ -25,6 +25,7 @@ from pyomo.opt.solver import *
 from pyomo.solvers.mockmip import MockMIP
 from pyomo.core.base import Var, ComponentMap, Suffix, active_export_suffix_generator
 from pyomo.core.kernel.block import IBlock
+from pyomo.util.components import iter_component
 
 logger = logging.getLogger('pyomo.solvers')
 
@@ -233,8 +234,11 @@ class CPLEXSHELL(ILMLicensedSystemCallSolver):
 
     def _get_suffixes(self, instance):
         if isinstance(instance, IBlock):
-            suffixes = pyomo.core.kernel.suffix.export_suffix_generator(
-                instance, datatype=Suffix.INT, active=True, descend_into=False
+            suffixes = (
+                (suf.name, suf)
+                for suf in pyomo.core.kernel.suffix.export_suffix_generator(
+                    instance, datatype=Suffix.INT, active=True, descend_into=False
+                )
             )
         else:
             suffixes = active_export_suffix_generator(instance, datatype=Suffix.INT)
@@ -268,14 +272,7 @@ class CPLEXSHELL(ILMLicensedSystemCallSolver):
 
             var_direction = directions.get(var, BranchDirection.default)
 
-            if not var.is_indexed():
-                if id(var) not in byObject:
-                    continue
-
-                rows.append((byObject[id(var)], priority, var_direction))
-                continue
-
-            for child_var in var.values():
+            for child_var in iter_component(var):
                 if id(child_var) not in byObject:
                     continue
 
