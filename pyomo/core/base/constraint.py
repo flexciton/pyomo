@@ -311,7 +311,7 @@ class _GeneralConstraintData(_ConstraintData):
         _active         A boolean that indicates whether this data is active
     """
 
-    __slots__ = ('_body', '_lower', '_upper', '_equality')
+    __slots__ = ('_body', '_lower', '_upper', '_equality', '_canonical_form_has_been_set', '_canonical_form')
 
     def __init__(self,  expr=None, component=None):
         #
@@ -330,6 +330,58 @@ class _GeneralConstraintData(_ConstraintData):
         self._equality = False
         if expr is not None:
             self.set_value(expr)
+
+        self._canonical_form_has_been_set = False
+        self._canonical_form = None
+
+    @property
+    def _linear_canonical_form(self):
+        return self._canonical_form_has_been_set or _ConstraintData._linear_canonical_form
+
+    def cast_to_linear_canonical_form(self):
+        """ Compile the constraint body into a standard repn """
+        from pyomo.repn import generate_standard_repn
+        self._canonical_form = generate_standard_repn(self._body, compute_values=False, quadratic=False)
+        assert self._canonical_form.is_linear()
+        self._canonical_form_has_been_set = True
+
+    def canonical_form(self, compute_values=True):
+        """ Get the current canonical representation of the body of this constraint.
+
+        This is much more efficient than calling `generate_standard_repn()` from scratch when we have only modified
+        the `value` and `fixed` attributes of model objects. """
+        from pyomo.repn.standard_repn import StandardRepn
+
+        variables = []
+        coefficients = []
+        constant = 0
+
+        if compute_values:
+            constant += value(self._canonical_form.constant)
+        else:
+            constant += self._canonical_form.constant
+
+        for var, coeff in zip(self._canonical_form.linear_vars, self._canonical_form.linear_coefs):
+            if var.is_expression_type():
+                var = var.expr
+
+            if not var.fixed:
+                variables.append(var)
+                if compute_values:
+                    coefficients.append(value(coeff))
+                else:
+                    coefficients.append(coeff)
+            else:
+                if compute_values:
+                    constant += value(coeff) * var()
+                else:
+                    constant += coeff * var
+
+        repn = StandardRepn()
+        repn.linear_vars = tuple(variables)
+        repn.linear_coefs = tuple(coefficients)
+        repn.constant = constant
+        return repn
 
     def __getstate__(self):
         """
