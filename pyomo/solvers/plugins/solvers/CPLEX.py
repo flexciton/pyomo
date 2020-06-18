@@ -512,6 +512,19 @@ class CPLEXSHELL(ILMLicensedSystemCallSolver):
         self._best_bound = None
         self._gap = None
 
+        # use regular expressions to use multi-line match patterns:
+        root_node_processing_time = re.findall(
+            r'Root node processing \(before b&c\):\n\s+Real time\s+=\s+(\d+\.\d+) sec', output
+        )
+        if root_node_processing_time:
+            results.solver.root_node_processing_time = float(root_node_processing_time[0])
+
+        tree_processing_time = re.findall(
+            r'[Parallel, \d+ threads b&c|Sequential b&c]:\n\s+Real time\s+=\s+(\d+\.\d+) sec', output
+        )
+        if tree_processing_time:
+            results.solver.tree_processing_time = float(tree_processing_time[0])
+
         for line in output.split("\n"):
             tokens = re.split('[ \t]+',line.strip())
             if len(tokens) > 3 and ("CPLEX", "Error") in {tuple(tokens[0:2]), tuple(tokens[1:3])}:
@@ -550,6 +563,10 @@ class CPLEXSHELL(ILMLicensedSystemCallSolver):
             elif len(tokens) >= 3 and tokens[0] == "Variables":
                 if results.problem.number_of_variables is None: # CPLEX 11.2 and subsequent versions have two Variables sections in the log file output.
                     results.problem.number_of_variables = int(tokens[2])
+                if "Nneg" in tokens[3]:
+                    results.problem.number_of_continuous_variables = int(tokens[4][:-1])  # remove trailing comma
+                if "Binary" in tokens[5]:
+                    results.problem.number_of_binary_variables = int(tokens[6][:-1])  # remove trailing bracket
             # In CPLEX 11 (and presumably before), there was only a single line output to
             # indicate the constriant count, e.g., "Linear constraints : 16 [Less: 7, Greater: 6, Equal: 3]".
             # In CPLEX 11.2 (or somewhere in between 11 and 11.2 - I haven't bothered to track it down
@@ -605,6 +622,10 @@ class CPLEXSHELL(ILMLicensedSystemCallSolver):
             elif len(tokens) >= 6 and tokens[0] == "MIP" and tuple(tokens[5:]) == ('no', 'integer', 'solution.'):
                 results.solver.termination_condition = TerminationCondition.noSolution
                 results.solver.termination_message = ' '.join(tokens)
+            elif len(tokens) >= 9 and tokens[0] == "MIP" and tokens[1] == "start" and tokens[7] == "objective":
+                results.solver.warm_start_objective_value = float(tokens[8][:-1])  # remove trailing full stop
+            elif len(tokens) >= 5 and tokens[0] == "Solution" and tokens[1] == "pool:" and tokens[3] in ["solution", "solutions"] and tokens[4] == "saved.":
+                results.solver.n_solutions_found = int(tokens[2])
             elif len(tokens) >= 10 and tokens[0] == "Current" and tokens[1] == "MIP" and tokens[2] == "best" and tokens[3] == "bound":
                 self._best_bound = float(tokens[5])
                 self._gap = float(tokens[8].rstrip(','))
