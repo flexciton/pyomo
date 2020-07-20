@@ -46,6 +46,16 @@ def _get_bound(exp):
     raise ValueError("non-fixed bound or weight: " + str(exp))
 
 
+def _handle_rounding_errors(bound, constraint_data):
+    NDIGITS_TOL = 4
+    rounded = round(bound, NDIGITS_TOL)
+    if rounded != bound:
+        print(f'_handle_rounding_errors: bound: {bound} -> {rounded}')
+        constraint_data.pprint()
+        bound = rounded
+    return bound
+
+
 @WriterFactory.register('cpxlp', 'Generate the corresponding CPLEX LP file')
 @WriterFactory.register('lp', 'Generate the corresponding CPLEX LP file')
 class ProblemWriter_cpxlp(AbstractProblemWriter):
@@ -656,6 +666,7 @@ class ProblemWriter_cpxlp(AbstractProblemWriter):
                                               column_order)
                 bound = constraint_data.lower
                 bound = _get_bound(bound) - offset
+                bound = _handle_rounding_errors(bound, constraint_data)
                 output.append(eq_string_template
                                   % (_no_negative_zero(bound)))
                 output.append("\n")
@@ -676,6 +687,7 @@ class ProblemWriter_cpxlp(AbstractProblemWriter):
                                                   column_order)
                     bound = constraint_data.lower
                     bound = _get_bound(bound) - offset
+                    bound = _handle_rounding_errors(bound, constraint_data)
                     output.append(geq_string_template
                                       % (_no_negative_zero(bound)))
                 else:
@@ -697,6 +709,7 @@ class ProblemWriter_cpxlp(AbstractProblemWriter):
                                                   column_order)
                     bound = constraint_data.upper
                     bound = _get_bound(bound) - offset
+                    bound = _handle_rounding_errors(bound, constraint_data)
                     output.append(leq_string_template
                                       % (_no_negative_zero(bound)))
                 else:
