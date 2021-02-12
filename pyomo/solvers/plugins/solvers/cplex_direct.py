@@ -664,10 +664,14 @@ class CPLEXDirect(DirectSolver):
         self.results.solver.wallclock_time = self._wallclock_time
         self.results.solver.deterministic_time = self._deterministic_time
 
+        # todo `multiobj_stopped` could be thrown for a number of reasons
+        # https://www.ibm.com/support/knowledgecenter/SSSA5P_20.1.0/ilog.odms.cplex.help/refcallablelibrary/macros/CPX_STAT_MULTIOBJ_STOPPED.html
+
         if status in {
             rtn_codes.optimal,
             rtn_codes.MIP_optimal,
             rtn_codes.optimal_tolerance,
+            rtn_codes.multiobj_optimal,
         }:
             self.results.solver.status = SolverStatus.ok
             self.results.solver.termination_condition = TerminationCondition.optimal
@@ -677,6 +681,7 @@ class CPLEXDirect(DirectSolver):
             40,
             rtn_codes.MIP_unbounded,
             rtn_codes.relaxation_unbounded,
+            rtn_codes.multiobj_unbounded,
             134,
         }:
             self.results.solver.status = SolverStatus.warning
@@ -685,6 +690,7 @@ class CPLEXDirect(DirectSolver):
         elif status in {
             rtn_codes.infeasible_or_unbounded,
             rtn_codes.MIP_infeasible_or_unbounded,
+            rtn_codes.multiobj_inforunbd,
             134,
         }:
             # Note: status of 4 means infeasible or unbounded
@@ -693,7 +699,7 @@ class CPLEXDirect(DirectSolver):
             self.results.solver.termination_condition = \
                 TerminationCondition.infeasibleOrUnbounded
             soln.status = SolutionStatus.unsure
-        elif status in {rtn_codes.infeasible, rtn_codes.MIP_infeasible}:
+        elif status in {rtn_codes.infeasible, rtn_codes.MIP_infeasible, rtn_codes.multiobj_infeasible}:
             self.results.solver.status = SolverStatus.warning
             self.results.solver.termination_condition = TerminationCondition.infeasible
             soln.status = SolutionStatus.infeasible
@@ -718,6 +724,7 @@ class CPLEXDirect(DirectSolver):
             rtn_codes.abort_dettime_limit,
             rtn_codes.MIP_time_limit_feasible,
             rtn_codes.MIP_dettime_limit_feasible,
+            rtn_codes.multiobj_non_optimal,
         }:
             self.results.solver.status = SolverStatus.aborted
             self.results.solver.termination_condition = TerminationCondition.maxTimeLimit
