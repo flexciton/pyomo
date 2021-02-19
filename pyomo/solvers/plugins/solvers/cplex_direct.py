@@ -16,16 +16,18 @@ from pyutilib.misc import Bunch
 from pyutilib.services import TempfileManager
 from pyomo.core.expr.numvalue import is_fixed
 from pyomo.core.expr.numvalue import value
+from pyomo.core.base import Suffix, active_export_suffix_generator
 from pyomo.repn import generate_standard_repn
 from pyomo.solvers.plugins.solvers.direct_solver import DirectSolver
 from pyomo.solvers.plugins.solvers.direct_or_persistent_solver import DirectOrPersistentSolver
 from pyomo.core.kernel.objective import minimize, maximize
 from pyomo.core.kernel.component_set import ComponentSet
 from pyomo.core.kernel.component_map import ComponentMap
+from pyomo.core.kernel.block import IBlock
 from pyomo.opt.results.results_ import SolverResults
 from pyomo.opt.results.solution import Solution, SolutionStatus
 from pyomo.opt.results.solver import TerminationCondition, SolverStatus
-from pyomo.opt.base import SolverFactory
+from pyomo.opt.base import SolverFactory, BranchDirection
 import time
 
 
@@ -877,6 +879,67 @@ class CPLEXDirect(DirectSolver):
                 self._solver_model.MIP_starts.add(
                     [var_names, var_values],
                     self._solver_model.MIP_starts.effort_level.auto)
+
+    # Expected names of `Suffix` components for branching priorities and directions respectively
+    SUFFIX_PRIORITY_NAME = "priority"
+    SUFFIX_DIRECTION_NAME = "direction"
+
+    def _add_priorities(self, instance):
+        priorities, directions = self._get_suffixes(instance)
+        rows = self._convert_priorities_to_rows(instance, priorities, directions)
+        self._add_priority_rows(rows)
+
+    def _get_suffixes(self, instance):
+        if isinstance(instance, IBlock):
+            suffixes = pyomo.core.kernel.suffix.export_suffix_generator(
+                instance, datatype=Suffix.INT, active=True, descend_into=False
+            )
+        else:
+            suffixes = active_export_suffix_generator(instance, datatype=Suffix.INT)
+        suffixes = dict(suffixes)
+
+        if self.SUFFIX_PRIORITY_NAME not in suffixes:
+            raise ValueError(
+                "Cannot write branching priorities file as `model.%s` Suffix has not been declared."
+                % (self.SUFFIX_PRIORITY_NAME,)
+            )
+
+        return (
+            suffixes[self.SUFFIX_PRIORITY_NAME],
+            suffixes.get(self.SUFFIX_DIRECTION_NAME, ComponentMap()),
+        )
+
+    def _convert_priorities_to_rows(self, instance, priorities, directions):
+        byObject = self._symbol_map.byObject
+
+        rows = []
+        for var, priority in priorities.items():
+            if priority is None or not var.active:
+                continue
+
+            if not (0 <= priority == int(priority)):
+                raise ValueError("`priority` must be a non-negative integer")
+
+            var_direction = directions.get(var, BranchDirection.default)
+
+            if not var.is_indexed():
+                if id(var) not in byObject:
+                    continue
+
+                rows.append((byObject[id(var)], priority, var_direction))
+                continue
+
+            for child_var in var.values():
+                if id(child_var) not in byObject:
+                    continue
+
+                child_var_direction = directions.get(child_var, var_direction)
+
+                rows.append((byObject[id(child_var)], priority, child_var_direction))
+        return rows
+
+    def _add_priority_rows(self, rows):
+        self._solver_model.order.set(rows)
 
     def _load_vars(self, vars_to_load=None):
         var_map = self._pyomo_var_to_ndx_map
