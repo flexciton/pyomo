@@ -15,7 +15,6 @@ Script to generate the installer for pyomo.
 import sys
 import os
 
-
 def read(*rnames):
     with open(os.path.join(os.path.dirname(__file__), *rnames)) as README:
         # Strip all leading badges up to, but not including the COIN-OR
@@ -37,19 +36,7 @@ def get_version():
         exec(_FILE.read(), _verInfo)
     return _verInfo['__version__']
 
-requires = [
-    'PyUtilib>=5.7.4.dev0',
-    'appdirs',
-    'ply',
-    'six>=1.4',
-    ]
-if sys.version_info < (2, 7):
-    requires.append('argparse')
-    requires.append('unittest2')
-    requires.append('ordereddict')
-
 from setuptools import setup, find_packages
-import sys
 
 CYTHON_REQUIRED = "required"
 if 'develop' in sys.argv:
@@ -107,14 +94,15 @@ def run_setup():
       # Note: the release number is set in pyomo/version/info.py
       #
       version=get_version(),
-      maintainer='William E. Hart',
-      maintainer_email='wehart@sandia.gov',
+      maintainer='Pyomo Developer Team',
+      maintainer_email='pyomo-developers@googlegroups.com',
       url='http://pyomo.org',
       license='BSD',
       platforms=["any"],
       description='Pyomo: Python Optimization Modeling Objects',
       long_description=read('README.md'),
       long_description_content_type='text/markdown',
+      keywords=['optimization'],
       classifiers=[
         'Development Status :: 5 - Production/Stable',
         'Intended Audience :: End Users/Desktop',
@@ -125,35 +113,27 @@ def run_setup():
         'Operating System :: Microsoft :: Windows',
         'Operating System :: Unix',
         'Programming Language :: Python',
-        'Programming Language :: Python :: 2',
-        'Programming Language :: Python :: 2.7',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.4',
-        'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.9',
         'Programming Language :: Python :: Implementation :: CPython',
         'Programming Language :: Python :: Implementation :: Jython',
         'Programming Language :: Python :: Implementation :: PyPy',
         'Topic :: Scientific/Engineering :: Mathematics',
         'Topic :: Software Development :: Libraries :: Python Modules' ],
+      python_requires='>=3.6',
+      install_requires=[
+          'PyUtilib>=6.0.1.dev0',
+          'ply',
+          'six>=1.4',
+      ],
       packages=find_packages(exclude=("scripts",)),
       package_data={"pyomo.contrib.viewer":["*.ui"]},
-      keywords=['optimization'],
-      install_requires=requires,
       ext_modules = ext_modules,
-      python_requires='>=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*',
       entry_points="""
         [console_scripts]
-        runbenders=pyomo.pysp.benders:Benders_main
-        evaluate_xhat=pyomo.pysp.evaluate_xhat:EvaluateXhat_main
-        runph=pyomo.pysp.phinit:PH_main
-        runef=pyomo.pysp.ef_writer_script:main
-        phsolverserver=pyomo.pysp.phsolverserver:main
-        scenariotreeserver=pyomo.pysp.scenariotree.server_pyro:main
-        computeconf=pyomo.pysp.computeconf:main
-
         results_schema=pyomo.scripting.commands:results_schema
         pyro_mip_server = pyomo.scripting.pyro_mip_server:main
         test.pyomo = pyomo.scripting.runtests:runPyomoTests
@@ -168,14 +148,6 @@ def run_setup():
         pyomo_old=pyomo.scripting.pyomo_command:main
 
         [pyomo.command]
-        pyomo.runbenders=pyomo.pysp.benders
-        pyomo.evaluate_xhat=pyomo.pysp.evaluate_xhat
-        pyomo.runph=pyomo.pysp.phinit
-        pyomo.runef=pyomo.pysp.ef_writer_script
-        pyomo.phsolverserver=pyomo.pysp.phsolverserver
-        pyomo.scenariotreeserver=pyomo.pysp.scenariotree.server_pyro
-        pyomo.computeconf=pyomo.pysp.computeconf
-
         pyomo.help = pyomo.scripting.driver_help
         pyomo.test.pyomo = pyomo.scripting.runtests
         pyomo.pyro_mip_server = pyomo.scripting.pyro_mip_server
@@ -204,7 +176,7 @@ ERROR: Cython was explicitly requested with --with-cython, but cythonization
 ERROR: setup() failed:
     %s
 Re-running setup() without the Cython modules
-""" % (e_info.message,))
+""" % (str(e_info),))
         ext_modules = []
         run_setup()
         print("""
@@ -213,4 +185,4 @@ WARNING: Installation completed successfully, but the attempt to cythonize
          optimizations and is not required for any Pyomo functionality.
          Cython returned the following error:
    "%s"
-""" % (e_info.message,))
+""" % (str(e_info),))

@@ -43,10 +43,10 @@ import math
 import itertools
 import operator
 import types
+import enum
 
-from pyutilib.enum import Enum
-from pyutilib.misc import flatten_tuple
-
+from pyomo.common.log import is_debug_set
+from pyomo.common.deprecation import deprecation_warning
 from pyomo.common.timing import ConstructionTimer
 from pyomo.core.base.plugin import ModelComponentFactory
 from pyomo.core.base.block import Block, _BlockData
@@ -55,25 +55,28 @@ from pyomo.core.base.sos import SOSConstraint
 from pyomo.core.base.var import Var, _VarData, IndexedVar
 from pyomo.core.base.set_types import PositiveReals, NonNegativeReals, Binary
 from pyomo.core.base.numvalue import value
+from pyomo.core.base.util import flatten_tuple
 
 from six import iterkeys, advance_iterator
 from six.moves import xrange, zip
 
 logger = logging.getLogger('pyomo.core')
 
-PWRepn = Enum('SOS2',
-              'BIGM_BIN',
-              'BIGM_SOS1',
-              'CC',
-              'DCC',
-              'DLOG',
-              'LOG',
-              'MC',
-              'INC')
+class PWRepn(str, enum.Enum):
+    SOS2 =      'SOS2'
+    BIGM_BIN =  'BIGM_BIN'
+    BIGM_SOS1 = 'BIGM_SOS1'
+    CC =        'CC'
+    DCC =       'DCC'
+    DLOG =      'DLOG'
+    LOG =       'LOG'
+    MC =        'MC'
+    INC =       'INC'
 
-Bound = Enum('Lower',
-             'Upper',
-             'Equal')
+class Bound(str, enum.Enum):
+    Lower = 'Lower'
+    Upper = 'Upper'
+    Equal = 'Equal'
 
 # BE SURE TO CHANGE THE PIECWISE DOCSTRING
 # IF THIS GETS CHANGED
@@ -1062,11 +1065,11 @@ class Piecewise(Block):
         pw_rep = translate_repn.get(pw_rep,pw_rep)
         if (pw_rep == PWRepn.BIGM_BIN) or \
            (pw_rep == PWRepn.BIGM_SOS1):
-            logger.warning(
-                "DEPRECATED: The 'BIGM_BIN' and 'BIGM_SOS1' "
+            deprecation_warning(
+                "The 'BIGM_BIN' and 'BIGM_SOS1' "
                 "piecewise representations will be removed in "
                 "a future version of Pyomo. They produce incorrect "
-                "results in certain cases")
+                "results in certain cases", version='5.3')
         # translate the user input to the enum type
         bound_type = kwds.pop('pw_constr_type',None)
         bound_type = translate_bound.get(bound_type,bound_type)
@@ -1170,8 +1173,7 @@ class Piecewise(Block):
         """
         A quick hack to call add after data has been loaded.
         """
-        generate_debug_messages \
-            = __debug__ and logger.isEnabledFor(logging.DEBUG)
+        generate_debug_messages = is_debug_set(logger)
 
         if self._constructed:
             return

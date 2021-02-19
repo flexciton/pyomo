@@ -20,10 +20,10 @@ from os.path import abspath, dirname
 currdir = dirname(abspath(__file__)) + os.sep
 
 import pyutilib.th as unittest
-from pyutilib.misc import setup_redirect, reset_redirect
 
 from pyomo.opt import ProblemFormat
-from pyomo.core import *
+from pyomo.core import ConcreteModel, Var, Constraint, TransformationFactory, Objective, Block, inequality
+from pyomo.common.tee import capture_output
 from pyomo.mpec import Complementarity, complements, ComplementarityList
 from pyomo.gdp import Disjunct, Disjunction
 
@@ -50,9 +50,8 @@ class CCTests(object):
         if self.xfrm is not None:
             xfrm = TransformationFactory(self.xfrm)
             xfrm.apply_to(M)
-        setup_redirect(ofile)
-        self._print(M)
-        reset_redirect()
+        with capture_output(ofile):
+            self._print(M)
         if not os.path.exists(bfile):
             os.rename(ofile, bfile)
         self.assertFileEqualsBaseline(ofile, bfile)
@@ -208,11 +207,9 @@ class CCTests(object):
     def test_cov6(self):
         # Testing construction with indexing and an expression
         M = self._setup()
-        try:
+        with self.assertRaisesRegex(
+                ValueError, "Invalid tuple for Complementarity"):
             M.cc = Complementarity([0,1], expr=())
-            self.fail("Expected an IndexError")
-        except IndexError:
-            pass
 
     def test_cov7(self):
         # Testing error checking with return value
@@ -313,7 +310,10 @@ class CCTests(object):
 
     def test_list5(self):
         M = self._setup()
-        M.cc = ComplementarityList(rule=(complements(M.y + M.x3, M.x1 + 2*M.x2 == i) for i in range(3)))
+        M.cc = ComplementarityList(
+            rule=( complements(M.y + M.x3, M.x1 + 2*M.x2 == i)
+                   for i in range(3) )
+        )
         self._test("list5", M)
 
     def test_list6(self):

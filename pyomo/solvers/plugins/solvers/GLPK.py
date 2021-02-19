@@ -12,13 +12,13 @@ import logging
 import re
 import sys
 import csv
+import subprocess
 
-import pyutilib.subprocess
-from pyutilib.misc import Bunch, Options
-from pyutilib.services import TempfileManager
+from pyomo.common.tempfiles import TempfileManager
 
 from pyomo.common import Executable
-from pyomo.opt import *
+from pyomo.common.collections import Bunch, Options
+from pyomo.opt import SolverFactory, OptSolver, ProblemFormat, ResultsFormat, SolverResults, TerminationCondition, SolutionStatus, ProblemSense
 from pyomo.opt.base.solvers import _extract_version
 from pyomo.opt.solver import SystemCallSolver
 
@@ -34,10 +34,11 @@ def configure_glpk():
     _glpk_version = _extract_version("")
     if not Executable("glpsol"):
         return
-    errcode, results = pyutilib.subprocess.run(
-        [Executable('glpsol').path(), "--version"], timelimit=2)
-    if errcode == 0:
-        _glpk_version = _extract_version(results)
+    result = subprocess.run([Executable('glpsol').path(), "--version"],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            timeout=1, universal_newlines=True)
+    if not result.returncode:
+        _glpk_version = _extract_version(result.stdout)
 
 # Not sure how better to get these constants, but pulled from GLPK
 # documentation and source code (include/glpk.h)

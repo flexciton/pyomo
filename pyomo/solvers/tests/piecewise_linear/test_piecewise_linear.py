@@ -13,20 +13,14 @@ from os.path import dirname, abspath, join
 thisDir = dirname( abspath(__file__) )
 
 import pyutilib.th as unittest
-import pyutilib.misc
 
 import pyomo.opt
+from pyomo.common.dependencies import yaml, yaml_available, yaml_load_args
+from pyomo.common.fileutils import import_file
 from pyomo.core.base import Var
 from pyomo.core.base.objective import minimize, maximize
 from pyomo.core.base.piecewise import Bound, PWRepn
 from pyomo.solvers.tests.solvers import test_solver_cases
-
-yaml_available=False
-try:
-    import yaml
-    yaml_available = True
-except:
-    pass
 
 smoke_problems = ['convex_var','step_var','step_vararray']
 
@@ -59,10 +53,8 @@ def createTestMethod(pName,problem,solver,writer,kwds):
             obj.skipTest("Solver %s (interface=%s) is not available"
                          % (solver, writer))
 
-        m = pyutilib.misc.import_file(os.path.join(thisDir,
-                                                   'problems',
-                                                   problem),
-                                      clear_cache=True)
+        m = import_file(os.path.join(thisDir, 'problems', problem + '.py'),
+                        clear_cache=True)
 
         model = m.define_model(**kwds)
 
@@ -112,7 +104,7 @@ def assignTests(cls, problem_list):
                                 setattr(cls,attrName,createTestMethod(attrName,PROBLEM,solver,writer,kwds))
                                 if yaml_available:
                                     with open(join(thisDir,'baselines',PROBLEM+'_baseline_results.yml'),'r') as f:
-                                        baseline_results = yaml.load(f)
+                                        baseline_results = yaml.load(f, **yaml_load_args)
                                         setattr(cls,PROBLEM+'_results',baseline_results)
 
 @unittest.skipUnless(yaml_available, "PyYAML module is not available.")

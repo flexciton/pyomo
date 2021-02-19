@@ -7,20 +7,20 @@
 #  rights in this software.
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
-from pyomo.contrib.pynumero.sparse import BlockSymMatrix
+from pyomo.contrib.pynumero.sparse import BlockMatrix
 from pyomo.contrib.pynumero.interfaces.pyomo_nlp import PyomoNLP
 import matplotlib.pylab as plt
 
-from pyomo.pysp.scenariotree.manager import \
+from pysp.scenariotree.manager import \
     ScenarioTreeManagerFactory
-from pyomo.pysp.scenariotree.instance_factory import \
+from pysp.scenariotree.instance_factory import \
     ScenarioTreeInstanceFactory
 
 
 from gas_network_model import (pysp_instance_creation_callback,
                                nx_scenario_tree)
 
-from pyomo.pysp.ef import create_ef_instance
+from pysp.ef import create_ef_instance
 
 # define and initialize the SP
 instance_factory = ScenarioTreeInstanceFactory(
@@ -77,9 +77,10 @@ plt.title('Hessian of the Lagrangian function\n')
 plt.show()
 
 # Build KKT matrix
-kkt = BlockSymMatrix(2)
-kkt[0, 0] = hess_lag
-kkt[1, 0] = jac_full
+kkt = BlockMatrix(2,2)
+kkt.set_block(0, 0, hess_lag)
+kkt.set_block(1, 0, jac_full)
+kkt.set_block(0, 1, jac_full.transpose())
 full_kkt = kkt.tocoo()
 plt.spy(full_kkt)
 plt.title('Karush-Kuhn-Tucker Matrix\n')

@@ -8,8 +8,6 @@
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 #
-# Unit Tests for pyomo.base.misc
-#
 
 import re
 import os
@@ -17,11 +15,12 @@ from os.path import abspath, dirname
 currdir= dirname(abspath(__file__))
 
 import pyutilib.th as unittest
-from pyutilib.misc import setup_redirect, reset_redirect
 
 from pyomo.opt import check_available_solvers
 import pyomo.scripting.pyomo_command as main
-from pyomo.core import *
+from pyomo.core import (AbstractModel, ConcreteModel, Block, Set, Param, Var,
+                        Objective, Constraint, Reals, display)
+from pyomo.common.tee import capture_output
 
 from six import StringIO
 
@@ -116,12 +115,11 @@ class PyomoBadModels ( unittest.TestCase ):
         out = kwargs.get( 'file', None )
         if out is None:
             out = StringIO()
-        setup_redirect( out )
-        os.chdir( currdir )
-        output = main.run( args )
-        reset_redirect()
+        with capture_output(out):
+            os.chdir( currdir )
+            output = main.run( args )
         if not 'file' in kwargs:
-            return OUTPUT.getvalue()
+            return output.getvalue()
         return output
 
     def test_uninstantiated_model_linear ( self ):
@@ -181,6 +179,7 @@ class TestComponent(unittest.TestCase):
         m.b.v = Var()
         m.c = Block()
         self.assertRaises(RuntimeError, m.b.v.getname, fully_qualified=True, relative_to=m.c)
+
 
 if __name__ == "__main__":
     unittest.main()

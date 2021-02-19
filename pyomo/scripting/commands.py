@@ -14,10 +14,9 @@ import os
 import string
 import signal
 import subprocess
-import pyutilib.subprocess
 
 import pyutilib.pyro
-from pyutilib.misc import Options
+from pyomo.common.collections import Options
 from pyomo.opt import SolverResults
 from pyomo.common._command import pyomo_command
 import pyomo.scripting.pyomo_parser
@@ -123,7 +122,7 @@ def pyomo_python(args=None):
         console.interact('Pyomo Python Console\n'+sys.version)
     else:
         cmd = sys.executable+' '+ ' '.join(args)
-        pyutilib.subprocess.run(cmd, stdout=sys.stdout, stderr=sys.stderr)
+        subprocess.run(cmd)
 
 @pyomo_command('pyomo', "The main command interface for Pyomo")
 def pyomo(args=None):

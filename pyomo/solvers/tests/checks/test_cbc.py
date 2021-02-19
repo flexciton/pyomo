@@ -9,9 +9,9 @@
 #  ___________________________________________________________________________
 
 
-from pyomo.environ import *
+from pyomo.environ import SolverFactory, ConcreteModel, Var, Constraint, Objective, Integers, Boolean
 import pyutilib.th as unittest
-from pyutilib.misc import capture_output
+from pyomo.common.tee import capture_output
 
 opt_cbc = SolverFactory('cbc')
 cbc_available = opt_cbc.available(exception_flag=False)

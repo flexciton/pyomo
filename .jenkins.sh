@@ -25,6 +25,9 @@
 #
 # DISABLE_COVERAGE: if nonempty, then coverage analysis is disabled
 #
+# PYOMO_SETUP_ARGS: passed to the 'python setup.py develop' command
+#     (e.g., to specify --with-cython)
+#
 # PYOMO_DOWNLOAD_ARGS: passed to the 'pyomo download-extensions" command
 #     (e.g., to set up local SSL certificate authorities)
 #
@@ -52,20 +55,24 @@ MODE="$1"
 if test -z "$MODE" -o "$MODE" == setup; then
     # Clean old PYC files and remove any previous virtualenv
     echo "#"
-    echo "# Cleaning out old .pyc files"
+    echo "# Removing python virtual environment"
     echo "#"
     rm -rf ${WORKSPACE}/python
-    find ${WORKSPACE}/pyomo -name \*.pyc -delete
-    find ${WORKSPACE}/pyutilib -name \*.pyc -delete
+    echo "#"
+    echo "# Cleaning out old .pyc and cython files"
+    echo "#"
+    for EXT in pyc pyx pyd so dylib dll; do
+        find ${WORKSPACE}/pyomo -name \*.$EXT -delete
+        find ${WORKSPACE}/pyutilib -name \*.$EXT -delete
+    done
 
     # Set up the local lpython
     echo ""
     echo "#"
-    echo "# Setting up virutal environment"
+    echo "# Setting up virtual environment"
     echo "#"
     virtualenv python $VENV_SYSTEM_PACKAGES --clear
-    # Put the venv at the beginning of the PATH
-    export PATH="$WORKSPACE/python/bin:$PATH"
+    source python/bin/activate
     # Because modules set the PYTHONPATH, we need to make sure that the
     # virtualenv appears first
     LOCAL_SITE_PACKAGES=`python -c "from distutils.sysconfig import get_python_lib; print(get_python_lib())"`
@@ -81,19 +88,11 @@ if test -z "$MODE" -o "$MODE" == setup; then
     python setup.py develop || exit 1
     popd
     pushd "$WORKSPACE/pyomo" || exit 1
-    python setup.py develop || exit 1
+    python setup.py develop $PYOMO_SETUP_ARGS || exit 1
     popd
     #
     # DO NOT install pyomo-model-libraries
     #
-
-    #
-    # #! lines cannot exceed 128 characters, which Jenkins will
-    # periodically do, especially for matrix jobs.  We will make
-    # the virtualenv relocatable to shorten the line, instead relying
-    # on the virtualenv being the first thing on the PATH.
-    #
-    virtualenv --relocatable python
 
     # Set up coverage tracking for subprocesses
     if test -z "$DISABLE_COVERAGE"; then
@@ -102,8 +101,8 @@ if test -z "$MODE" -o "$MODE" == setup; then
         # Set up coverage for this build
         export COVERAGE_PROCESS_START=${WORKSPACE}/coveragerc
         cp ${WORKSPACE}/pyomo/.coveragerc ${COVERAGE_PROCESS_START}
-        echo "source=${WORKSPACE}/pyomo" >> ${COVERAGE_PROCESS_START}
-        echo "data_file=${WORKSPACE}/pyomo/.coverage" >> ${COVERAGE_PROCESS_START}
+        echo "data_file=${WORKSPACE}/pyomo/.coverage" \
+            >> ${COVERAGE_PROCESS_START}
         echo 'import coverage; coverage.process_startup()' \
             > "${LOCAL_SITE_PACKAGES}/run_coverage_at_startup.pth"
     fi
@@ -177,6 +176,7 @@ if test -z "$MODE" -o "$MODE" == test; then
         # Note, that the PWD should still be $WORKSPACE/pyomo
         #
         coverage combine || exit 1
+        coverage report -i
         export OS=`uname`
         if test -z "$CODECOV_TOKEN"; then
             coverage xml
@@ -186,13 +186,13 @@ if test -z "$MODE" -o "$MODE" == test; then
             while /bin/true; do
                 i=$[$i+1]
                 echo "Uploading coverage to codecov (attempt $i)"
-                codecov -X gcovcodecov -X gcov --no-color \
+                codecov -X gcovcodecov -X gcov -X s3 --no-color \
                     -t $CODECOV_TOKEN --root `pwd` -e OS,python \
                     --name $CODECOV_JOB_NAME $CODECOV_ARGS \
                     | tee .cover.upload
                 if test $? == 0 -a `grep -i error .cover.upload | wc -l` -eq 0; then
                     break
-                elif  test $i -ge 3; then
+                elif test $i -ge 4; then
                     exit 1
                 fi
                 DELAY=$(( RANDOM % 30 + 15))
