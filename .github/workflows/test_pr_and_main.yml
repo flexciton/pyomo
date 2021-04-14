@@ -3,10 +3,10 @@ name: GitHub CI
 on:
   push:
     branches:
-      - main
+      - master
   pull_request:
     branches:
-      - main
+      - master
   workflow_dispatch:
     inputs:
       git-ref:
@@ -647,7 +647,7 @@ jobs:
         fi
 
     - name: Upload codecov reports
-      if: github.repository_owner == 'Pyomo' || github.ref != 'refs/heads/main'
+      if: github.repository_owner == 'Pyomo' || github.ref != 'refs/heads/master'
       run: |
         set +e
         if [ "$GITHUB_EVENT_NAME" == "pull_request" ]; then
