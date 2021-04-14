@@ -3,10 +3,10 @@ name: GitHub CI
 on:
   push:
     branches:
-      - master
+      - main
   pull_request:
     branches:
-      - master
+      - main
   workflow_dispatch:
     inputs:
       git-ref:
@@ -21,13 +21,14 @@ env:
   PYTHONWARNINGS: ignore::UserWarning
   PYTHON_CORE_PKGS: wheel
   PYTHON_REQUIRED_PKGS: >
-      nose coverage
+      nose coverage parameterized pybind11
   PYTHON_BASE_PKGS: >
       ply six dill ipython networkx openpyxl pathos
       pint pyro4 pyyaml sphinx_rtd_theme sympy xlrd
       python-louvain
   PYTHON_NUMPY_PKGS: >
-      numpy scipy pyodbc pandas matplotlib seaborn numdifftools
+      numpy scipy pyodbc pandas matplotlib seaborn numdifftools 
+      parameterized casadi
   CACHE_VER: v3
   NEOS_EMAIL: tests@pyomo.org
 
@@ -40,7 +41,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-18.04, macos-latest, windows-latest]
-        python: [2.7, 3.5, 3.6, 3.7, 3.8, 3.9, pypy2, pypy3]
+        python: [3.6, 3.7, 3.8, 3.9, pypy3]
         other: [""]
         category: ["nightly"]
         # Ubuntu-18.04 should be replaced with ubuntu-latest once PyNumero
@@ -62,7 +63,7 @@ jobs:
           PACKAGES: glpk
 
         - os: ubuntu-18.04
-          python: 3.7
+          python: 3.8
           other: /mpi
           mpi: 3
           skip_doctest: 1
@@ -88,11 +89,12 @@ jobs:
 
         - os: ubuntu-18.04
           python: 3.6
-          other: /parallel
-          category: parallel
+          other: /cython
+          setup_options: --with-cython
           skip_doctest: 1
           TARGET: linux
           PYENV: pip
+          PACKAGES: cython
 
         - os: ubuntu-18.04
           python: 3.7
@@ -102,19 +104,8 @@ jobs:
           TARGET: linux
           PYENV: pip
 
-        - os: ubuntu-18.04
-          python: 3.6
-          other: /cython
-          setup_options: --with-cython
-          skip_doctest: 1
-          TARGET: linux
-          PYENV: pip
-          PACKAGES: cython
-
         exclude:
-        - {os: macos-latest, python: pypy2}
         - {os: macos-latest, python: pypy3}
-        - {os: windows-latest, python: pypy2}
         - {os: windows-latest, python: pypy3}
 
     steps:
@@ -205,7 +196,6 @@ jobs:
         for pkg in bash pkg-config unixodbc freetds glpk; do
             brew list $pkg || brew install $pkg
         done
-        #brew link --overwrite gcc
 
     - name: Update Linux
       if: matrix.TARGET == 'linux'
@@ -217,6 +207,11 @@ jobs:
         sudo apt-get -o Dir::Cache=${GITHUB_WORKSPACE}/cache/os \
             install libopenblas-dev gfortran liblapack-dev glpk-utils
         sudo chmod -R 777 ${GITHUB_WORKSPACE}/cache/os
+
+    - name: Update Windows
+      if: matrix.TARGET == 'win'
+      run: |
+        echo "SETUPTOOLS_USE_DISTUTILS=local" >> $GITHUB_ENV
 
     - name: Set up Python ${{ matrix.python }}
       if: matrix.PYENV == 'pip'
@@ -286,13 +281,13 @@ jobs:
         conda install -q -y -c conda-forge ${PYTHON_CORE_PKGS}
         conda install -q -y -c conda-forge ${PYTHON_PACKAGES}
         if test -z "${{matrix.slim}}"; then
-            # Note: CPLEX 12.9 (the last version in conda that supports
-            #    Python 2.7) causes a seg fault in the tests.
             conda install -q -y -c ibmdecisionoptimization 'cplex>=12.10' \
                 || echo "WARNING: CPLEX Community Edition is not available"
+            conda install -q -y -c gurobi gurobi \
+                || echo "WARNING: Gurobi is not available"
             conda install -q -y -c fico-xpress xpress \
                 || echo "WARNING: Xpress Community Edition is not available"
-            for PKG in casadi cyipopt pymumps; do
+            for PKG in cyipopt pymumps; do
                 conda install -q -y -c conda-forge $PKG \
                     || echo "WARNING: $PKG is not available"
             done
@@ -315,6 +310,7 @@ jobs:
       run: |
         IPOPT_DIR=$TPL_DIR/ipopt
         echo "$IPOPT_DIR" >> $GITHUB_PATH
+        echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$IPOPT_DIR" >> $GITHUB_ENV
         mkdir -p $IPOPT_DIR
         IPOPT_TAR=${DOWNLOAD_DIR}/ipopt.tar.gz
         if test ! -e $IPOPT_TAR; then
@@ -518,7 +514,7 @@ jobs:
         for cat in ${{matrix.category}}; do
             CATEGORY+=" --cat $cat"
         done
-        test.pyomo -v $CATEGORY pyomo `pwd`/pyomo-model-libraries
+        $PYTHON_EXE -m pyomo.common.unittest pyomo `pwd`/pyomo-model-libraries -v $CATEGORY
 
     - name: Run Pyomo MPI tests
       if: matrix.mpi != 0
@@ -651,8 +647,14 @@ jobs:
         fi
 
     - name: Upload codecov reports
+      if: github.repository_owner == 'Pyomo' || github.ref != 'refs/heads/main'
       run: |
         set +e
+        if [ "$GITHUB_EVENT_NAME" == "pull_request" ]; then
+            SHA=$(jq --raw-output .pull_request.head.sha "$GITHUB_EVENT_PATH")
+        else
+            SHA=$GITHUB_SHA
+        fi
         function upload {
             echo ""
             echo "Build group: $1"
@@ -671,17 +673,22 @@ jobs:
             i=0
             while : ; do
                 ((i+=1))
+                rm -f codecov.log
                 echo "Uploading coverage to codecov (attempt ${i})"
                 bash $CODECOV -Z -e TAG,GHA_OS_NAME -X gcov -X s3 \
-                    -f coverage.xml
+                    -f coverage.xml -C $SHA | tee codecov.log
                 if test $? == 0; then
                     echo "PASS $CODECOV_NAME" >> codecov.result
                     break
                 elif test $i -ge 2; then
-                    # Do not fail the build (yet) just because the codecov
-                    # upload fails
-                    echo "FAIL $CODECOV_NAME" >> codecov.result
-                    break
+                    if test `grep successfully codecov.log | wc -l` -gt 0; then
+                        echo "PASS $CODECOV_NAME (implied)" >> codecov.result
+                    else
+                        # Do not fail the build (yet) just because the
+                        # codecov upload fails
+                        echo "FAIL $CODECOV_NAME" >> codecov.result
+                        break
+                    fi
                 fi
                 DELAY=$(( RANDOM % 30 + 30))
                 echo "Pausing $DELAY seconds before re-attempting upload"
