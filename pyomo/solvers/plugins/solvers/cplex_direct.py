@@ -186,6 +186,8 @@ class CPLEXDirect(DirectSolver):
             _log_file += (_process_stream,)
         try:
             self._solver_model.set_results_stream(*_log_file)
+            self._solver_model.set_warning_stream(*_log_file)
+            self._solver_model.set_error_stream(*_log_file)
             if self._keepfiles:
                 print("Solver log file: "+self._log_file)
             
@@ -272,6 +274,8 @@ class CPLEXDirect(DirectSolver):
             self._deterministic_time = det1 - det0
         finally:
             self._solver_model.set_results_stream(None)
+            self._solver_model.set_warning_stream(None)
+            self._solver_model.set_error_stream(None)
             if _close_log_file:
                 _log_file[0].close()
 
@@ -751,6 +755,28 @@ class CPLEXDirect(DirectSolver):
         self.results.solver.return_code = self._error_code
         self.results.solver.termination_message = cpxprob.solution.get_status_string(status)
 
+        # Get additional solver output from log file
+        if self.version() >= (12, 5, 1) and isinstance(self._log_file, six.string_types):
+            _log_file = open(self._log_file, 'r')
+            _close_log_file = True
+        else:
+            _log_file = self._log_file
+            _close_log_file = False
+
+        mip_start_warning = False
+        for line in _log_file:
+            if (
+                    line.startswith('Warning')
+                    and re.search(r'No solution found from \d+ MIP starts', line)
+            ):
+                mip_start_warning = True
+                break
+
+        if _close_log_file:
+            _log_file.close()
+
+        self.results.solver.mip_start_failed = mip_start_warning
+
         if cpxprob.objective.get_sense() == cpxprob.objective.sense.minimize:
             self.results.problem.sense = minimize
         elif cpxprob.objective.get_sense() == cpxprob.objective.sense.maximize:
@@ -891,9 +917,9 @@ class CPLEXDirect(DirectSolver):
             var_names = []
             var_values = []
             for pyomo_var, cplex_var in self._pyomo_var_to_solver_var_map.items():
-                if pyomo_var.value is not None:
+                if pyomo_var.value is not None and not (self._integer_only_warmstarts and pyomo_var.is_continuous()):
                     var_names.append(cplex_var)
-                    var_values.append(value(pyomo_var))
+                    var_values.append(value(pyomo_var) if pyomo_var.is_continuous() else round(value(pyomo_var)))
 
             if len(var_names):
                 self._solver_model.MIP_starts.add(

@@ -221,11 +221,12 @@ class CPLEXSHELL(ILMLicensedSystemCallSolver):
             mst_file.write("<variables>\n")
             for var in instance.component_data_objects(Var):
                 if (var.value is not None) and \
+                   (not (self._integer_only_warmstarts and var.is_continuous())) and \
                    (id(var) in byObject):
                     name = byObject[id(var)]
                     mst_file.write("<variable index=\"%d\" "
                                    "name=\"%s\" value=\"%f\" />\n"
-                                   % (output_index, name, var.value))
+                                   % (output_index, name, var.value if var.is_continuous() else round(var.value)))
                     output_index = output_index + 1
 
             mst_file.write("</variables>\n")
@@ -311,6 +312,7 @@ class CPLEXSHELL(ILMLicensedSystemCallSolver):
         self._warm_start_file_name = _validate_file_name(
             self, kwds.pop('warmstart_file', None), "warm start")
         user_warmstart = self._warm_start_file_name is not None
+        self._integer_only_warmstarts = kwds.pop('integer_only_warmstarts', False)
 
         # the input argument can currently be one of two things: an instance or a filename.
         # if a filename is provided and a warm-start is indicated, we go ahead and
@@ -526,6 +528,10 @@ class CPLEXSHELL(ILMLicensedSystemCallSolver):
         )
         if tree_processing_time:
             results.solver.tree_processing_time = float(tree_processing_time.group(1))
+
+        # Check if a mip start was attempted but failed
+        mip_start_warning = re.search(r'Warning:\s+No solution found from \d+ MIP starts', output)
+        results.solver.mip_start_failed = bool(mip_start_warning)
 
         for line in output.split("\n"):
             tokens = re.split('[ \t]+',line.strip())
@@ -1005,5 +1011,3 @@ class MockCPLEX(CPLEXSHELL,MockMIP):
 
     def _execute_command(self, cmd):
         return MockMIP._execute_command(self, cmd)
-
-

@@ -14,7 +14,7 @@ from pyomo.common.tempfiles import TempfileManager
 import pyutilib.th as unittest
 
 import pyomo.kernel as pmo
-from pyomo.core import Binary, ConcreteModel, Constraint, Objective, Var, Integers, RangeSet, minimize, quicksum, Suffix
+from pyomo.core import Binary, ConcreteModel, Constraint, NonNegativeReals, Objective, Var, Integers, RangeSet, minimize, quicksum, Suffix
 from pyomo.opt import (BranchDirection, ProblemFormat, SolverFactory,
                        SolverStatus, TerminationCondition, convert_problem)
 from pyomo.solvers.plugins.solvers.CPLEX import CPLEXSHELL, MockCPLEX, _validate_file_name, ORDFileSchema
@@ -299,6 +299,44 @@ class CPLEXShellSolvePrioritiesFileKernel(CPLEXShellSolvePrioritiesFile):
         return m
 
 
+class TestCPLEXSHELLWarmstartFile(unittest.TestCase):
+    def _get_mock_model(self):
+        model = ConcreteModel()
+        model.X = Var(within=NonNegativeReals, initialize=1.5)
+        model.Y = Var(within=Binary, initialize=0)
+        model.O = Objective(expr=model.X * model.Y)
+        return model
+
+    def test_mst_file_all_vars(self):
+        model = self._get_mock_model()
+        with SolverFactory("_mock_cplex") as opt:
+            opt._presolve(model, keepfiles=True, warmstart=True, integer_only_warmstarts=False)
+            with open(opt._warm_start_file_name, "r") as warmstart_file:
+                file_str = warmstart_file.read()
+                assert 'value="1.500000' in file_str
+                assert 'value="0.000000' in file_str
+
+    def test_mst_file_integer_vars_only(self):
+        model = self._get_mock_model()
+        with SolverFactory("_mock_cplex") as opt:
+            opt._presolve(model, keepfiles=True, warmstart=True, integer_only_warmstarts=True)
+            with open(opt._warm_start_file_name, "r") as warmstart_file:
+                file_str = warmstart_file.read()
+                assert 'value="1.500000' not in file_str
+                assert 'value="0.000000' in file_str
+
+    def test_integer_value_rounded(self):
+        model = self._get_mock_model()
+        model.Y.value = 0.999999
+        with SolverFactory("_mock_cplex") as opt:
+            opt._presolve(model, keepfiles=True, warmstart=True, integer_only_warmstarts=True)
+            with open(opt._warm_start_file_name, "r") as warmstart_file:
+                file_str = warmstart_file.read()
+                assert 'value="0.999999' not in file_str
+                assert 'value="1.000000' in file_str
+
+
+
 class TestCPLEXSHELLProcessLogfile(unittest.TestCase):
     def setUp(self):
         solver = MockCPLEX()
@@ -429,6 +467,16 @@ MIP start 'm1' defined initial solution with objective 25210.5363.
 
         results = CPLEXSHELL.process_logfile(self.solver)
         self.assertEqual(results.solver.warm_start_objective_value, 25210.5363)
+
+    def test_log_file_shows_warm_start_failure(self):
+        log_file_text = """
+Warning:  No solution found from 1 MIP starts.
+"""
+        with open(self.solver._log_file, "w") as f:
+            f.write(log_file_text)
+
+        results = CPLEXSHELL.process_logfile(self.solver)
+        self.assertEqual(results.solver.mip_start_failed, True)
 
     def test_log_file_shows_root_node_processing_time(self):
         log_file_text = """
