@@ -122,6 +122,7 @@ class DirectOrPersistentSolver(OptSolver):
         warmstart_flag = kwds.pop('warmstart', False)
         self._keepfiles = kwds.pop('keepfiles', False)
         self._save_results = kwds.pop('save_results', True)
+        self._priorities_solve = kwds.pop("priorities", False)
         self._integer_only_warmstarts = kwds.pop('integer_only_warmstarts', False)
 
         # create a context in the temporary file manager for
@@ -163,6 +164,9 @@ class DirectOrPersistentSolver(OptSolver):
 
         if self._log_file is None:
             self._log_file = TempfileManager.create_tempfile(suffix='.log')
+
+        if self._priorities_solve:
+            self._add_priorities(self._pyomo_model)
 
     """ This method should be implemented by subclasses."""
     def _apply_solver(self):
