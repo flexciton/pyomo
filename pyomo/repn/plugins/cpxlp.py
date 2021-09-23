@@ -560,6 +560,8 @@ class ProblemWriter_cpxlp(AbstractProblemWriter):
         output.append("s.t.\n")
         output.append("\n")
 
+        lazy_output = []
+
         have_nontrivial = False
 
         supports_quadratic_constraint = solver_capability('quadratic_constraint')
@@ -607,6 +609,9 @@ class ProblemWriter_cpxlp(AbstractProblemWriter):
         for constraint_data, repn in yield_all_constraints():
             have_nontrivial = True
 
+            is_lazy = constraint_data.is_lazy
+            out = lazy_output if is_lazy else output
+
             degree = repn.polynomial_degree()
 
             #
@@ -640,19 +645,19 @@ class ProblemWriter_cpxlp(AbstractProblemWriter):
                     value(constraint_data.upper)
                 label = 'c_e_%s_' % con_symbol
                 alias_symbol_func(symbol_map, constraint_data, label)
-                output.append(label)
-                output.append(':\n')
+                out.append(label)
+                out.append(':\n')
                 offset = print_expr_canonical(repn,
-                                              output,
+                                              out,
                                               object_symbol_dictionary,
                                               variable_symbol_dictionary,
                                               False,
                                               column_order)
                 bound = constraint_data.lower
                 bound = _get_bound(bound) - offset
-                output.append(eq_string_template
+                out.append(eq_string_template
                                   % (_no_negative_zero(bound)))
-                output.append("\n")
+                out.append("\n")
             else:
                 if constraint_data.has_lb():
                     if constraint_data.has_ub():
@@ -660,17 +665,17 @@ class ProblemWriter_cpxlp(AbstractProblemWriter):
                     else:
                         label = 'c_l_%s_' % con_symbol
                     alias_symbol_func(symbol_map, constraint_data, label)
-                    output.append(label)
-                    output.append(':\n')
+                    out.append(label)
+                    out.append(':\n')
                     offset = print_expr_canonical(repn,
-                                                  output,
+                                                  out,
                                                   object_symbol_dictionary,
                                                   variable_symbol_dictionary,
                                                   False,
                                                   column_order)
                     bound = constraint_data.lower
                     bound = _get_bound(bound) - offset
-                    output.append(geq_string_template
+                    out.append(geq_string_template
                                       % (_no_negative_zero(bound)))
                 else:
                     assert constraint_data.has_ub()
@@ -681,17 +686,17 @@ class ProblemWriter_cpxlp(AbstractProblemWriter):
                     else:
                         label = 'c_u_%s_' % con_symbol
                     alias_symbol_func(symbol_map, constraint_data, label)
-                    output.append(label)
-                    output.append(':\n')
+                    out.append(label)
+                    out.append(':\n')
                     offset = print_expr_canonical(repn,
-                                                  output,
+                                                  out,
                                                   object_symbol_dictionary,
                                                   variable_symbol_dictionary,
                                                   False,
                                                   column_order)
                     bound = constraint_data.upper
                     bound = _get_bound(bound) - offset
-                    output.append(leq_string_template
+                    out.append(leq_string_template
                                       % (_no_negative_zero(bound)))
                 else:
                     assert constraint_data.has_lb()
@@ -762,6 +767,11 @@ class ProblemWriter_cpxlp(AbstractProblemWriter):
                               variable_symbol_map,
                               soscondata,
                               SOSlines)
+
+        if lazy_output:
+            output.append('Lazy Constraints\n')
+            output.extend(lazy_output)
+            output.append("\n")
 
         #
         # Bounds

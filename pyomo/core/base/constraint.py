@@ -272,7 +272,7 @@ class _GeneralConstraintData(_ConstraintData):
         _active         A boolean that indicates whether this data is active
     """
 
-    __slots__ = ('_body', '_lower', '_upper', '_expr')
+    __slots__ = ('_body', '_lower', '_upper', '_expr', 'is_lazy')
 
     def __init__(self,  expr=None, component=None):
         #
@@ -284,6 +284,7 @@ class _GeneralConstraintData(_ConstraintData):
         self._component = weakref_ref(component) if (component is not None) \
                           else None
         self._active = True
+        self.is_lazy = component.is_lazy if component is not None else False
 
         self._body = None
         self._lower = None
@@ -696,6 +697,8 @@ class Constraint(ActiveIndexedComponent):
         else:
             raise ValueError("Duplicate initialization: Constraint() only "
                              "accepts one of 'rule=' and 'expr='")
+
+        self.is_lazy = kwargs.pop('is_lazy', False)
 
         kwargs.setdefault('ctype', Constraint)
         ActiveIndexedComponent.__init__(self, *args, **kwargs)
