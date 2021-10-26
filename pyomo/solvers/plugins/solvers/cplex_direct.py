@@ -728,6 +728,7 @@ class CPLEXDirect(DirectSolver):
             rtn_codes.MIP_time_limit_feasible,
             rtn_codes.MIP_dettime_limit_feasible,
             rtn_codes.multiobj_non_optimal,
+            rtn_codes.multiobj_stopped,
         }:
             self.results.solver.status = SolverStatus.aborted
             self.results.solver.termination_condition = TerminationCondition.maxTimeLimit
