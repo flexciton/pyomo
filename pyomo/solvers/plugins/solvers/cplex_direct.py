@@ -20,6 +20,7 @@ from pyomo.core.expr.numvalue import is_fixed
 from pyomo.core.expr.numvalue import value
 from pyomo.core.staleflag import StaleFlagManager
 from pyomo.repn import generate_standard_repn
+from pyomo.solvers.plugins.solvers.cplex_helpers import get_tree_processing_time, get_root_node_processing_time
 from pyomo.solvers.plugins.solvers.direct_solver import DirectSolver
 from pyomo.solvers.plugins.solvers.direct_or_persistent_solver import DirectOrPersistentSolver
 from pyomo.core.kernel.objective import minimize, maximize
@@ -157,6 +158,8 @@ class CPLEXDirect(DirectSolver):
         self._capabilities.sos1 = True
         self._capabilities.sos2 = True
 
+        self.paramsets = None
+
     def _apply_solver(self):
         StaleFlagManager.mark_all_as_stale()
 
@@ -185,7 +188,7 @@ class CPLEXDirect(DirectSolver):
             self._solver_model.set_error_stream(*_log_file)
             if self._keepfiles:
                 print("Solver log file: "+self._log_file)
-            
+
             obj_degree = self._objective.expr.polynomial_degree()
             if obj_degree is None or obj_degree > 2:
                 raise DegreeError('CPLEXDirect does not support expressions of degree {0}.'\
@@ -194,21 +197,21 @@ class CPLEXDirect(DirectSolver):
                 quadratic_objective = True
             else:
                 quadratic_objective = False
-            
+
             num_integer_vars = self._solver_model.variables.get_num_integer()
             num_binary_vars = self._solver_model.variables.get_num_binary()
             num_sos = self._solver_model.SOS.get_num()
-            
+
             if self._solver_model.quadratic_constraints.get_num() != 0:
                 quadratic_cons = True
             else:
                 quadratic_cons = False
-            
+
             if (num_integer_vars + num_binary_vars + num_sos) > 0:
                 integer = True
             else:
                 integer = False
-            
+
             if integer:
                 if quadratic_cons:
                     self._solver_model.set_problem_type(self._solver_model.problem_type.MIQCP)
@@ -228,7 +231,7 @@ class CPLEXDirect(DirectSolver):
             # set cplex's mip.tolerances.mipgap
             if self.options.mipgap is not None:
                 self._solver_model.parameters.mip.tolerances.mipgap.set(float(self.options.mipgap))
-            
+
             for key, option in self.options.items():
                 if key == 'mipgap': # handled above
                     continue
@@ -259,7 +262,7 @@ class CPLEXDirect(DirectSolver):
             det0 = self._solver_model.get_dettime()
 
             try:
-                self._solver_model.solve()
+                self._solver_model.solve(paramsets=self.paramsets)
             except self._cplex.exceptions.CplexSolverError as e:
                 self._error_code = e.args[2]  # See cplex.exceptions.error_codes
 
@@ -669,6 +672,7 @@ class CPLEXDirect(DirectSolver):
             rtn_codes.optimal,
             rtn_codes.MIP_optimal,
             rtn_codes.optimal_tolerance,
+            rtn_codes.multiobj_optimal,
         }:
             self.results.solver.status = SolverStatus.ok
             self.results.solver.termination_condition = TerminationCondition.optimal
@@ -679,6 +683,7 @@ class CPLEXDirect(DirectSolver):
             rtn_codes.MIP_unbounded,
             rtn_codes.relaxation_unbounded,
             134,
+            rtn_codes.multiobj_unbounded,
         }:
             self.results.solver.status = SolverStatus.warning
             self.results.solver.termination_condition = TerminationCondition.unbounded
@@ -687,6 +692,7 @@ class CPLEXDirect(DirectSolver):
             rtn_codes.infeasible_or_unbounded,
             rtn_codes.MIP_infeasible_or_unbounded,
             134,
+            rtn_codes.multiobj_inforunbd,
         }:
             # Note: status of 4 means infeasible or unbounded
             #       and 119 means MIP infeasible or unbounded
@@ -694,7 +700,7 @@ class CPLEXDirect(DirectSolver):
             self.results.solver.termination_condition = \
                 TerminationCondition.infeasibleOrUnbounded
             soln.status = SolutionStatus.unsure
-        elif status in {rtn_codes.infeasible, rtn_codes.MIP_infeasible}:
+        elif status in {rtn_codes.infeasible, rtn_codes.MIP_infeasible, rtn_codes.multiobj_infeasible}:
             self.results.solver.status = SolverStatus.warning
             self.results.solver.termination_condition = TerminationCondition.infeasible
             soln.status = SolutionStatus.infeasible
@@ -719,7 +725,9 @@ class CPLEXDirect(DirectSolver):
             rtn_codes.abort_dettime_limit,
             rtn_codes.MIP_time_limit_feasible,
             rtn_codes.MIP_dettime_limit_feasible,
-        }:
+            rtn_codes.multiobj_stopped,
+            rtn_codes.multiobj_non_optimal,
+        } and cpxprob.solution.get_solution_type() != cpxprob.solution.type.none:
             self.results.solver.status = SolverStatus.aborted
             self.results.solver.termination_condition = TerminationCondition.maxTimeLimit
             soln.status = SolutionStatus.stoppedByLimit
@@ -729,6 +737,7 @@ class CPLEXDirect(DirectSolver):
             rtn_codes.node_limit_infeasible,
             rtn_codes.mem_limit_infeasible,
             rtn_codes.MIP_abort_infeasible,
+            rtn_codes.multiobj_stopped,
         } or self._error_code == self._cplex.exceptions.error_codes.CPXERR_NO_SOLN:
             # CPLEX doesn't have a solution status for `noSolution` so we assume this from the combination of
             # maxTimeLimit + infeasible (instead of a generic `TerminationCondition.error`).
@@ -747,18 +756,34 @@ class CPLEXDirect(DirectSolver):
         if self.version() >= (12, 5, 1) and isinstance(self._log_file, str):
             _log_file = open(self._log_file, 'r')
             _close_log_file = True
+            log_output: str = "".join(_log_file.readlines())
         else:
             _log_file = self._log_file
             _close_log_file = False
+            log_output: str = ""
+
+        # use regular expressions to use multi-line match patterns:
+        self.results.solver.root_node_processing_time = get_root_node_processing_time(
+            log_output=log_output
+        )
+        self.results.solver.tree_processing_time = get_tree_processing_time(
+            log_output=log_output
+        )
 
         mip_start_warning = False
-        for line in _log_file:
+        self.results.solver.n_solutions_found = 0
+        for line in log_output.split("\n"):
             if (
                     line.startswith('Warning')
                     and re.search(r'No solution found from \d+ MIP starts', line)
             ):
                 mip_start_warning = True
-                break
+
+            tokens = re.split('[ \t]+', line.strip())
+            if len(tokens) >= 9 and tokens[0] == "MIP" and tokens[1] == "start" and tokens[7] == "objective":
+                self.results.solver.warm_start_objective_value = float(tokens[8].rstrip('.'))
+            elif line.startswith("Found incumbent of value"):
+                self.results.solver.n_solutions_found += 1
 
         if _close_log_file:
             _log_file.close()
