@@ -67,6 +67,9 @@ class TerminationCondition(enum.Enum):
     licensingProblems = 13
     """The solver exited due to licensing problems"""
 
+    barrierNonOptimal = 14
+    """Barrier Non-optimal"""
+
 
 class SolverConfig(ConfigDict):
     """
