@@ -939,6 +939,7 @@ class CPLEXSHELL(ILMLicensedSystemCallSolver):
 
         if not results.solver.status is SolverStatus.error:
             if results.solver.termination_condition in [TerminationCondition.unknown,
+                                                        TerminationCondition.barrierNonOptimal,
                                                         #TerminationCondition.maxIterations,
                                                         #TerminationCondition.minFunctionValue,
                                                         #TerminationCondition.minStepLength,
