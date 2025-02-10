@@ -549,6 +549,7 @@ class CPLEXSHELL(ILMLicensedSystemCallSolver):
                         TerminationCondition.maxTimeLimit,
                         TerminationCondition.noSolution,
                         TerminationCondition.unbounded,
+                        TerminationCondition.barrierNonOptimal
                     }
                 ):
                     # If we have already determined the termination condition, reduce it to a warning.
@@ -605,6 +606,9 @@ class CPLEXSHELL(ILMLicensedSystemCallSolver):
                 results.solver.termination_message = ' '.join(tokens)
             elif len(tokens) >= 4 and tokens[0] == "Barrier" and tokens[2] == "Optimal:":
                 results.solver.termination_condition = TerminationCondition.optimal
+                results.solver.termination_message = ' '.join(tokens)
+            elif len(tokens) >= 4 and tokens[0] == "Barrier" and tokens[2] == "Non-optimal:":
+                results.solver.termination_condition = TerminationCondition.barrierNonOptimal
                 results.solver.termination_message = ' '.join(tokens)
             elif len(tokens) >= 4 and tokens[0] == "Dual" and tokens[3] == "Infeasible:":
                 results.solver.termination_condition = TerminationCondition.infeasible

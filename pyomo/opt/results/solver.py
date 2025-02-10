@@ -74,6 +74,8 @@ class TerminationCondition(str, enum.Enum):
                                                     #    optimizer
     licensingProblems='licensingProblems'           # Problem accessing solver license
 
+    barrierNonOptimal='barrierNonOptimal'           # Barrier - Non-optimal
+
     # Overloading __str__ is needed to match the behavior of the old
     # pyutilib.enum class (removed June 2020). There are spots in the
     # code base that expect the string representation for items in the

@@ -280,6 +280,8 @@ class Cplex(PersistentSolver):
             results.termination_condition = TerminationCondition.maxIterations
         elif status in [11, 25, 107, 131]:
             results.termination_condition = TerminationCondition.maxTimeLimit
+        elif status in {6}:
+            results.termination_condition = TerminationCondition.barrierNonOptimal
         else:
             results.termination_condition = TerminationCondition.unknown
 
