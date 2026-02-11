@@ -236,4 +236,14 @@ class SolverInformation(MapContainer):
         # Semantics: A string printed by the solver that summarizes the
         # termination status.
         self.declare('termination_message')
+        self.declare('deterministic_time', type=ScalarType.float)
         self.declare('statistics', value=SolverStatistics(), active=False)
+        self.declare('warm_start_objective_value', type=ScalarType.float)
+        # Semantics: The total time spent processing the root node.
+        self.declare('root_node_processing_time', type=ScalarType.time)
+        # Semantics: The total time spent processing the MIP search tree.
+        self.declare('tree_processing_time', type=ScalarType.time)
+        # Semantics: The number of feasible solutions found.
+        self.declare('n_solutions_found', type=ScalarType.int)
+        # Semantics: If mip start was attempted but failed to provide a feasible solution.
+        self.declare('mip_start_failed', type=bool)

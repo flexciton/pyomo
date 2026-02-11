@@ -10,6 +10,11 @@
 #  ___________________________________________________________________________
 
 import os
+from contextlib import contextmanager
+from unittest.mock import Mock
+
+
+from pyomo.opt.base.solvers import _extract_version
 
 from pyomo.common.tempfiles import TempfileManager
 import pyomo.common.unittest as unittest
@@ -27,7 +32,8 @@ from pyomo.core import (
     quicksum,
     Suffix,
 )
-from pyomo.opt import ProblemFormat, convert_problem, SolverFactory, BranchDirection
+from pyomo.core import NonNegativeReals
+from pyomo.opt import ProblemFormat, convert_problem, SolverFactory, BranchDirection, SolverStatus, TerminationCondition
 from pyomo.solvers.plugins.solvers.CPLEX import (
     CPLEXSHELL,
     MockCPLEX,
@@ -367,6 +373,333 @@ class CPLEXShellSolvePrioritiesFileKernel(CPLEXShellSolvePrioritiesFile):
         m.direction[m.y] = BranchDirection.down
         m.direction[m.y[-1]] = BranchDirection.up
         return m
+
+
+class TestCPLEXSHELLWarmstartFile(unittest.TestCase):
+    def _get_mock_model(self):
+        model = ConcreteModel()
+        model.X = Var(within=NonNegativeReals, initialize=1.5)
+        model.Y = Var(within=Binary, initialize=0)
+        model.O = Objective(expr=model.X * model.Y)
+        return model
+
+    def test_mst_file_all_vars(self):
+        model = self._get_mock_model()
+        with SolverFactory("_mock_cplex") as opt:
+            opt._presolve(model, keepfiles=True, warmstart=True, integer_only_warmstarts=False)
+            with open(opt._warm_start_file_name, "r") as warmstart_file:
+                file_str = warmstart_file.read()
+                assert 'value="1.500000' in file_str
+                assert 'value="0.000000' in file_str
+
+    def test_mst_file_integer_vars_only(self):
+        model = self._get_mock_model()
+        with SolverFactory("_mock_cplex") as opt:
+            opt._presolve(model, keepfiles=True, warmstart=True, integer_only_warmstarts=True)
+            with open(opt._warm_start_file_name, "r") as warmstart_file:
+                file_str = warmstart_file.read()
+                assert 'value="1.500000' not in file_str
+                assert 'value="0.000000' in file_str
+
+    def test_integer_value_rounded(self):
+        model = self._get_mock_model()
+        model.Y.value = 0.999999
+        with SolverFactory("_mock_cplex") as opt:
+            opt._presolve(model, keepfiles=True, warmstart=True, integer_only_warmstarts=True)
+            with open(opt._warm_start_file_name, "r") as warmstart_file:
+                file_str = warmstart_file.read()
+                assert 'value="0.999999' not in file_str
+                assert 'value="1.000000' in file_str
+
+
+class TestCPLEXSHELLProcessLogfile(unittest.TestCase):
+    def setUp(self):
+        TempfileManager.push()
+        solver = MockCPLEX()
+        solver._log_file = TempfileManager.create_tempfile(
+            suffix=".log"
+        )
+        self.solver = solver
+
+    def tearDown(self):
+        TempfileManager.pop()
+
+    def test_log_file_shows_no_solution(self):
+        log_file_text = """
+MIP - Time limit exceeded, no integer solution.
+Current MIP best bound =  0.0000000000e+00 (gap is infinite)
+Solution time =    0.00 sec.  Iterations = 0  Nodes = 0
+Deterministic time = 0.00 ticks  (0.20 ticks/sec)
+
+CPLEX> CPLEX Error  1217: No solution exists.
+No file written.
+CPLEX>"""
+        with open(self.solver._log_file, "w") as f:
+            f.write(log_file_text)
+
+        results = CPLEXSHELL.process_logfile(self.solver)
+        self.assertEqual(results.solver.status, SolverStatus.warning)
+        self.assertEqual(
+            results.solver.termination_condition, TerminationCondition.noSolution
+        )
+        self.assertEqual(
+            results.solver.termination_message,
+            "MIP - Time limit exceeded, no integer solution.",
+        )
+        self.assertEqual(results.solver.return_code, 1217)
+
+    def test_log_file_shows_infeasible(self):
+        log_file_text = """
+MIP - Integer infeasible.
+Current MIP best bound =  0.0000000000e+00 (gap is infinite)
+Solution time =    0.00 sec.  Iterations = 0  Nodes = 0
+Deterministic time = 0.00 ticks  (0.20 ticks/sec)
+
+CPLEX> CPLEX Error  1217: No solution exists.
+No file written.
+CPLEX>"""
+        with open(self.solver._log_file, "w") as f:
+            f.write(log_file_text)
+
+        results = CPLEXSHELL.process_logfile(self.solver)
+        self.assertEqual(results.solver.status, SolverStatus.warning)
+        self.assertEqual(
+            results.solver.termination_condition, TerminationCondition.infeasible
+        )
+        self.assertEqual(
+            results.solver.termination_message, "MIP - Integer infeasible."
+        )
+        self.assertEqual(results.solver.return_code, 1217)
+
+    def test_log_file_shows_presolve_infeasible(self):
+        log_file_text = """
+Infeasibility row 'c_e_x18_':  0  = -1.
+Presolve time = 0.00 sec. (0.00 ticks)
+Presolve - Infeasible.
+Solution time =    0.00 sec.
+Deterministic time = 0.00 ticks  (0.61 ticks/sec)
+CPLEX> CPLEX Error  1217: No solution exists.
+No file written.
+CPLEX>"""
+
+        with open(self.solver._log_file, "w") as f:
+            f.write(log_file_text)
+
+        results = CPLEXSHELL.process_logfile(self.solver)
+        self.assertEqual(results.solver.status, SolverStatus.warning)
+        self.assertEqual(
+            results.solver.termination_condition, TerminationCondition.infeasible
+        )
+        self.assertEqual(
+            results.solver.termination_message, "Presolve - Infeasible."
+        )
+        self.assertEqual(results.solver.return_code, 1217)
+
+    def test_log_file_shows_max_time_limit_exceeded_with_feasible_solution(self):
+        log_file_text = """
+MIP - Time limit exceeded, integer feasible:  Objective =  0.0000000000e+00
+Current MIP best bound =  0.0000000000e+00 (gap = 10.0, 10.00%)
+Solution time =   10.00 sec.  Iterations = 10000  Nodes = 1000
+Deterministic time = 100.00 ticks  (10.00 ticks/sec)
+
+CPLEX> Incumbent solution written to file '/var/folders/_x/xxx/T/tmpxxx.cplex.sol'.
+CPLEX>"""
+        with open(self.solver._log_file, "w") as f:
+            f.write(log_file_text)
+
+        results = CPLEXSHELL.process_logfile(self.solver)
+        self.assertEqual(results.solver.status, SolverStatus.ok)
+        self.assertEqual(
+            results.solver.termination_condition, TerminationCondition.maxTimeLimit
+        )
+        self.assertEqual(results.solver.deterministic_time, 100.00)
+
+    def test_log_file_shows_max_deterministic_time_limit_exceeded_with_feasible_solution(self):
+        log_file_text = """
+MIP - Deterministic time limit exceeded, integer feasible:  Objective =  0.0000000000e+00
+Current MIP best bound =  0.0000000000e+00 (gap = 10.0, 10.00%)
+Solution time =   10.00 sec.  Iterations = 10000  Nodes = 1000 (1)
+Deterministic time = 100.00 ticks  (10.00 ticks/sec)
+
+CPLEX> Incumbent solution written to file '/var/folders/_x/xxxx/T/tmpxxx.cplex.sol'.
+CPLEX>"""
+        with open(self.solver._log_file, "w") as f:
+            f.write(log_file_text)
+
+        results = CPLEXSHELL.process_logfile(self.solver)
+        self.assertEqual(results.solver.status, SolverStatus.ok)
+        self.assertEqual(
+            results.solver.termination_condition, TerminationCondition.maxTimeLimit
+        )
+        self.assertEqual(results.solver.deterministic_time, 100.00)
+
+    def test_log_file_shows_warm_start_objective_value(self):
+        log_file_text = """
+1 of 1 MIP starts provided solutions.
+MIP start 'm1' defined initial solution with objective 25210.5363.
+"""
+        with open(self.solver._log_file, "w") as f:
+            f.write(log_file_text)
+
+        results = CPLEXSHELL.process_logfile(self.solver)
+        self.assertEqual(results.solver.warm_start_objective_value, 25210.5363)
+
+    def test_log_file_shows_warm_start_failure(self):
+        log_file_text = """
+Warning:  No solution found from 1 MIP starts.
+"""
+        with open(self.solver._log_file, "w") as f:
+            f.write(log_file_text)
+
+        results = CPLEXSHELL.process_logfile(self.solver)
+        self.assertEqual(results.solver.mip_start_failed, True)
+
+    def test_log_file_shows_root_node_processing_time(self):
+        log_file_text = """
+Root node processing (before b&c):
+  Real time             =    123.45 sec. (211.39 ticks)
+Parallel b&c, 16 threads:
+  Real time             =    67.89 sec. (56.98 ticks)
+"""
+        with open(self.solver._log_file, "w") as f:
+            f.write(log_file_text)
+
+        results = CPLEXSHELL.process_logfile(self.solver)
+        self.assertEqual(results.solver.root_node_processing_time, 123.45)
+
+    def test_log_file_shows_tree_processing_time_when_parallel(self):
+        log_file_text = """
+Root node processing (before b&c):
+  Real time             =    123.45 sec. (211.39 ticks)
+Parallel b&c, 16 threads:
+  Real time             =    67.89 sec. (56.98 ticks)
+"""
+        with open(self.solver._log_file, "w") as f:
+            f.write(log_file_text)
+
+        results = CPLEXSHELL.process_logfile(self.solver)
+        self.assertEqual(results.solver.tree_processing_time, 67.89)
+
+    def test_log_file_shows_tree_processing_time_when_sequential(self):
+        log_file_text = """
+Root node processing (before b&c):
+  Real time             =    123.45 sec. (211.39 ticks)
+Sequential b&c:
+  Real time             =    67.89 sec. (56.98 ticks)
+"""
+        with open(self.solver._log_file, "w") as f:
+            f.write(log_file_text)
+
+        results = CPLEXSHELL.process_logfile(self.solver)
+        self.assertEqual(results.solver.tree_processing_time, 67.89)
+
+    def test_log_file_shows_n_solutions_found_when_multiple(self):
+        log_file_text = """
+Solution pool: 15 solutions saved.
+"""
+        with open(self.solver._log_file, "w") as f:
+            f.write(log_file_text)
+
+        results = CPLEXSHELL.process_logfile(self.solver)
+        self.assertEqual(results.solver.n_solutions_found, 15)
+
+    def test_log_file_shows_n_solutions_found_when_single(self):
+        log_file_text = """
+Solution pool: 1 solution saved.
+"""
+        with open(self.solver._log_file, "w") as f:
+            f.write(log_file_text)
+
+        results = CPLEXSHELL.process_logfile(self.solver)
+        self.assertEqual(results.solver.n_solutions_found, 1)
+
+    def test_log_file_shows_number_of_binary_variables(self):
+        log_file_text = """
+Objective sense      : Minimize
+Variables            :     506  [Nneg: 206,  Binary: 300]
+Objective nonzeros   :      32
+"""
+        with open(self.solver._log_file, "w") as f:
+            f.write(log_file_text)
+
+        results = CPLEXSHELL.process_logfile(self.solver)
+        self.assertEqual(results.problem.number_of_binary_variables, 300)
+
+    def test_log_file_shows_number_of_binary_variables_when_integer_variables_are_present(
+        self,
+    ):
+        log_file_text = """
+Variables : 7 [Nneg: 1, Binary: 4, General Integer: 2]
+"""
+        with open(self.solver._log_file, "w") as f:
+            f.write(log_file_text)
+
+        results = CPLEXSHELL.process_logfile(self.solver)
+        self.assertEqual(results.problem.number_of_binary_variables, 4)
+
+    def test_log_file_shows_number_of_continuous_variables(self):
+        log_file_text = """
+Objective sense      : Minimize
+Variables            :     506  [Nneg: 206,  Binary: 300]
+Objective nonzeros   :      32
+"""
+        with open(self.solver._log_file, "w") as f:
+            f.write(log_file_text)
+
+        results = CPLEXSHELL.process_logfile(self.solver)
+        self.assertEqual(results.problem.number_of_continuous_variables, 206)
+
+
+class TestCplexVersion:
+    ENV_VAR_NAME = 'CPLEX_VERSION'
+
+    @contextmanager
+    def temp_cplex_env_var_value(self, value):
+        old_environ = dict(os.environ)
+        if value is None:
+            os.environ.pop(self.ENV_VAR_NAME, None)
+        else:
+            os.environ[self.ENV_VAR_NAME] = value
+        try:
+            yield
+        finally:
+            os.environ.clear()
+            os.environ.update(old_environ)
+
+    def test_it_uses_env_var(self):
+        with self.temp_cplex_env_var_value('20.1.0'):
+            cplex = MockCPLEX()
+            assert cplex.version() == (20, 1, 0, 0)
+
+    def test_it_uses_subprocess_when_env_var_is_none(self):
+        with self.temp_cplex_env_var_value(None), unittest.mock.patch(
+            "pyomo.solvers.plugins.solvers.CPLEX.subprocess"
+        ) as mock_subprocess:
+            mock_subprocess.run.return_value = Mock(stdout='20.0.0')
+            cplex = MockCPLEX()
+            assert cplex.version() == (20, 0, 0, 0)
+            mock_subprocess.run.assert_called_once_with(
+                [cplex.executable(), '-c', 'quit'],
+                timeout=2,
+                stdout=mock_subprocess.PIPE,
+                stderr=mock_subprocess.STDOUT,
+                universal_newlines=True,
+            )
+
+    def test_it_uses_subprocess_when_env_var_is_invalid(self):
+        with self.temp_cplex_env_var_value("invalid_version"), unittest.mock.patch(
+            "pyomo.solvers.plugins.solvers.CPLEX.subprocess"
+        ) as mock_subprocess:
+            mock_subprocess.run.return_value = Mock(stdout='20.0.0')
+            cplex = MockCPLEX()
+            assert cplex.version() == (20, 0, 0, 0)
+            mock_subprocess.run.assert_called_once_with(
+                [cplex.executable(), '-c', 'quit'],
+                timeout=2,
+                stdout=mock_subprocess.PIPE,
+                stderr=mock_subprocess.STDOUT,
+                universal_newlines=True,
+            )
 
 
 if __name__ == "__main__":

@@ -29,6 +29,7 @@ from pyomo.opt.results.results_ import SolverResults
 from pyomo.opt.results.solution import Solution, SolutionStatus
 from pyomo.opt.results.solver import TerminationCondition, SolverStatus
 from pyomo.opt.base import SolverFactory
+from pyomo.solvers.plugins.solvers.cplex_helpers import get_tree_processing_time, get_root_node_processing_time
 import time
 
 
@@ -118,6 +119,7 @@ class CPLEXDirect(DirectSolver):
         DirectSolver.__init__(self, **kwds)
         self._init()
         self._wallclock_time = None
+        self._deterministic_time = None
         self._pyomo_var_to_ndx_map = ComponentMap()
         self._ndx_count = 0
 
@@ -147,6 +149,7 @@ class CPLEXDirect(DirectSolver):
             self._python_api_exists = False
 
         self._range_constraints = set()
+        self.paramsets = None
 
         self._max_constraint_degree = 2
         self._max_obj_degree = 2
@@ -184,6 +187,8 @@ class CPLEXDirect(DirectSolver):
             _log_file += (_process_stream,)
         try:
             self._solver_model.set_results_stream(*_log_file)
+            self._solver_model.set_warning_stream(*_log_file)
+            self._solver_model.set_error_stream(*_log_file)
             if self._keepfiles:
                 print("Solver log file: " + self._log_file)
 
@@ -272,12 +277,21 @@ class CPLEXDirect(DirectSolver):
                         raise
                     opt_cmd.set(float(option))
 
+            self._error_code = None
             t0 = time.time()
-            self._solver_model.solve()
+            det0 = self._solver_model.get_dettime()
+            try:
+                self._solver_model.solve(paramsets=self.paramsets)
+            except self._cplex.exceptions.CplexSolverError as e:
+                self._error_code = e.args[2]  # See cplex.exceptions.error_codes
             t1 = time.time()
+            det1 = self._solver_model.get_dettime()
             self._wallclock_time = t1 - t0
+            self._deterministic_time = det1 - det0
         finally:
             self._solver_model.set_results_stream(None)
+            self._solver_model.set_warning_stream(None)
+            self._solver_model.set_error_stream(None)
             if _close_log_file:
                 _log_file[0].close()
 
@@ -690,39 +704,126 @@ class CPLEXDirect(DirectSolver):
 
         self.results.solver.name = "CPLEX {0}".format(cpxprob.get_version())
         self.results.solver.wallclock_time = self._wallclock_time
+        self.results.solver.deterministic_time = self._deterministic_time
+        self.results.solver.return_code = self._error_code
+        self.results.solver.termination_message = cpxprob.solution.get_status_string(status)
 
-        if status in [1, 101, 102]:
+        # Get additional solver output from log file
+        if self.version() >= (12, 5, 1) and isinstance(self._log_file, str):
+            _log_file = open(self._log_file, 'r')
+            _close_log_file = True
+            log_output: str = "".join(_log_file.readlines())
+        else:
+            _log_file = self._log_file
+            _close_log_file = False
+            log_output: str = ""
+
+        # use regular expressions to use multi-line match patterns:
+        self.results.solver.root_node_processing_time = get_root_node_processing_time(
+            log_output=log_output
+        )
+        self.results.solver.tree_processing_time = get_tree_processing_time(
+            log_output=log_output
+        )
+
+        mip_start_warning = False
+        self.results.solver.n_solutions_found = 0
+        for line in log_output.split("\n"):
+            if (
+                    line.startswith('Warning')
+                    and re.search(r'No solution found from \d+ MIP starts', line)
+            ):
+                mip_start_warning = True
+
+            tokens = re.split('[ \t]+', line.strip())
+            if len(tokens) >= 9 and tokens[0] == "MIP" and tokens[1] == "start" and tokens[7] == "objective":
+                self.results.solver.warm_start_objective_value = float(tokens[8].rstrip('.'))
+            elif line.startswith("Found incumbent of value"):
+                self.results.solver.n_solutions_found += 1
+
+        if _close_log_file:
+            _log_file.close()
+
+        self.results.solver.mip_start_failed = mip_start_warning
+
+        rtn_codes = cpxprob.solution.status
+
+        if status in {
+            rtn_codes.optimal,
+            rtn_codes.MIP_optimal,
+            rtn_codes.optimal_tolerance,
+            rtn_codes.multiobj_optimal,
+        }:
             self.results.solver.status = SolverStatus.ok
             self.results.solver.termination_condition = TerminationCondition.optimal
             soln.status = SolutionStatus.optimal
-        elif status in [2, 40, 118, 133, 134]:
+        elif status in {
+            rtn_codes.unbounded,
+            40,
+            rtn_codes.MIP_unbounded,
+            rtn_codes.relaxation_unbounded,
+            134,
+            rtn_codes.multiobj_unbounded,
+        }:
             self.results.solver.status = SolverStatus.warning
             self.results.solver.termination_condition = TerminationCondition.unbounded
             soln.status = SolutionStatus.unbounded
-        elif status in [4, 119, 134]:
+        elif status in {
+            rtn_codes.infeasible_or_unbounded,
+            rtn_codes.MIP_infeasible_or_unbounded,
+            134,
+            rtn_codes.multiobj_inforunbd,
+        }:
             # Note: status of 4 means infeasible or unbounded
             #       and 119 means MIP infeasible or unbounded
             self.results.solver.status = SolverStatus.warning
-            self.results.solver.termination_condition = (
+            self.results.solver.termination_condition = \
                 TerminationCondition.infeasibleOrUnbounded
-            )
             soln.status = SolutionStatus.unsure
-        elif status in [3, 103]:
+        elif status in {rtn_codes.infeasible, rtn_codes.MIP_infeasible, rtn_codes.multiobj_infeasible}:
             self.results.solver.status = SolverStatus.warning
             self.results.solver.termination_condition = TerminationCondition.infeasible
             soln.status = SolutionStatus.infeasible
-        elif status in [10]:
+        elif status in {rtn_codes.abort_iteration_limit}:
             self.results.solver.status = SolverStatus.aborted
-            self.results.solver.termination_condition = (
-                TerminationCondition.maxIterations
-            )
+            self.results.solver.termination_condition = TerminationCondition.maxIterations
             soln.status = SolutionStatus.stoppedByLimit
-        elif status in [11, 25, 107, 131]:
+        elif status in {rtn_codes.MIP_abort_feasible}:
             self.results.solver.status = SolverStatus.aborted
-            self.results.solver.termination_condition = (
-                TerminationCondition.maxTimeLimit
-            )
+            self.results.solver.termination_condition = TerminationCondition.userInterrupt
+            soln.status = SolutionStatus.feasible
+        elif status in {
+            rtn_codes.solution_limit,
+            rtn_codes.node_limit_feasible,
+            rtn_codes.mem_limit_feasible,
+        }:
+            self.results.solver.status = SolverStatus.aborted
+            self.results.solver.termination_condition = TerminationCondition.maxEvaluations
             soln.status = SolutionStatus.stoppedByLimit
+        elif status in {
+            rtn_codes.abort_time_limit,
+            rtn_codes.abort_dettime_limit,
+            rtn_codes.MIP_time_limit_feasible,
+            rtn_codes.MIP_dettime_limit_feasible,
+            rtn_codes.multiobj_stopped,
+            rtn_codes.multiobj_non_optimal,
+        } and cpxprob.solution.get_solution_type() != cpxprob.solution.type.none:
+            self.results.solver.status = SolverStatus.aborted
+            self.results.solver.termination_condition = TerminationCondition.maxTimeLimit
+            soln.status = SolutionStatus.stoppedByLimit
+        elif status in {
+            rtn_codes.MIP_time_limit_infeasible,
+            rtn_codes.MIP_dettime_limit_infeasible,
+            rtn_codes.node_limit_infeasible,
+            rtn_codes.mem_limit_infeasible,
+            rtn_codes.MIP_abort_infeasible,
+            rtn_codes.multiobj_stopped,
+        } or self._error_code == self._cplex.exceptions.error_codes.CPXERR_NO_SOLN:
+            # CPLEX doesn't have a solution status for `noSolution` so we assume this from the combination of
+            # maxTimeLimit + infeasible (instead of a generic `TerminationCondition.error`).
+            self.results.solver.status = SolverStatus.warning
+            self.results.solver.termination_condition = TerminationCondition.noSolution
+            soln.status = SolutionStatus.unknown
         else:
             self.results.solver.status = SolverStatus.error
             self.results.solver.termination_condition = TerminationCondition.error
@@ -908,9 +1009,9 @@ class CPLEXDirect(DirectSolver):
             var_names = []
             var_values = []
             for pyomo_var, cplex_var in self._pyomo_var_to_solver_var_map.items():
-                if pyomo_var.value is not None:
+                if pyomo_var.value is not None and not (self._integer_only_warmstarts and pyomo_var.is_continuous()):
                     var_names.append(cplex_var)
-                    var_values.append(value(pyomo_var))
+                    var_values.append(value(pyomo_var) if pyomo_var.is_continuous() else round(value(pyomo_var)))
 
             if len(var_names):
                 self._solver_model.MIP_starts.add(

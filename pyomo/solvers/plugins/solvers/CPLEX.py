@@ -37,6 +37,7 @@ from pyomo.core.base import Var, Suffix, active_export_suffix_generator
 from pyomo.core.kernel.suffix import export_suffix_generator
 from pyomo.core.kernel.block import IBlock
 from pyomo.util.components import iter_component
+from pyomo.solvers.plugins.solvers.cplex_helpers import get_tree_processing_time, get_root_node_processing_time
 
 logger = logging.getLogger('pyomo.solvers')
 
@@ -225,12 +226,14 @@ class CPLEXSHELL(ILMLicensedSystemCallSolver):
             mst_file.write("<quality/>\n")
             mst_file.write("<variables>\n")
             for var in instance.component_data_objects(Var):
-                if (var.value is not None) and (id(var) in byObject):
+                if (var.value is not None) and \
+                   (not (self._integer_only_warmstarts and var.is_continuous())) and \
+                   (id(var) in byObject):
                     name = byObject[id(var)]
                     mst_file.write(
                         "<variable index=\"%d\" "
                         "name=\"%s\" value=\"%f\" />\n"
-                        % (output_index, name, var.value)
+                        % (output_index, name, var.value if var.is_continuous() else round(var.value))
                     )
                     output_index = output_index + 1
 
@@ -316,6 +319,7 @@ class CPLEXSHELL(ILMLicensedSystemCallSolver):
         self._warm_start_file_name = _validate_file_name(
             self, kwds.pop('warmstart_file', None), "warm start"
         )
+        self._integer_only_warmstarts = kwds.pop('integer_only_warmstarts', False)
         user_warmstart = self._warm_start_file_name is not None
 
         # the input argument can currently be one of two things: an instance or a filename.
@@ -399,6 +403,11 @@ class CPLEXSHELL(ILMLicensedSystemCallSolver):
         """
         Returns a tuple describing the solver executable version.
         """
+        # The subprocess below can sometimes time out if we're low on resources. This gives us a much
+        # cheaper way of getting the version
+        version_from_env = _extract_version(os.environ.get('CPLEX_VERSION', ''))
+        if version_from_env:
+            return version_from_env
         solver_exec = self.executable()
         if solver_exec is None:
             return _extract_version('')
@@ -514,21 +523,60 @@ class CPLEXSHELL(ILMLicensedSystemCallSolver):
         self._best_bound = None
         self._gap = None
 
+        # use regular expressions to use multi-line match patterns:
+        results.solver.root_node_processing_time = get_root_node_processing_time(
+            log_output=output
+        )
+        results.solver.tree_processing_time = get_tree_processing_time(
+            log_output=output
+        )
+
+        # Check if a mip start was attempted but failed
+        mip_start_warning = re.search(r'Warning:\s+No solution found from \d+ MIP starts', output)
+        results.solver.mip_start_failed = bool(mip_start_warning)
+
         for line in output.split("\n"):
             tokens = re.split('[ \t]+', line.strip())
-            if len(tokens) > 3 and tokens[0] == "CPLEX" and tokens[1] == "Error":
+            if len(tokens) > 3 and ("CPLEX", "Error") in {tuple(tokens[0:2]), tuple(tokens[1:3])}:
                 # IMPT: See below - cplex can generate an error line and then terminate fine, e.g., in CPLEX 12.1.
                 #       To handle these cases, we should be specifying some kind of termination criterion always
                 #       in the course of parsing a log file (we aren't doing so currently - just in some conditions).
-                results.solver.status = SolverStatus.error
+                if (
+                    results.solver.status == SolverStatus.ok
+                    and results.solver.termination_condition
+                    in {
+                        TerminationCondition.optimal,
+                        TerminationCondition.infeasible,
+                        TerminationCondition.maxTimeLimit,
+                        TerminationCondition.noSolution,
+                        TerminationCondition.unbounded,
+                    }
+                ):
+                    # If we have already determined the termination condition, reduce it to a warning.
+                    results.solver.status = SolverStatus.warning
+                else:
+                    results.solver.status = SolverStatus.error
                 results.solver.error = " ".join(tokens)
+
+                # Find the first token that starts with an integer, and strip non-integer characters for the return code
+                error_code_token = next((token for token in tokens if re.match(r'\d', token)), None)
+                if error_code_token:
+                    results.solver.return_code = int(re.sub(r'[^\d]', '', error_code_token))
+                else:
+                    results.solver.return_code = None
             elif len(tokens) >= 3 and tokens[0] == "ILOG" and tokens[1] == "CPLEX":
                 cplex_version = tokens[2].rstrip(',')
+            elif len(tokens) >= 3 and tokens[1] == "Version":
+                cplex_version = tokens[3]
             elif len(tokens) >= 3 and tokens[0] == "Variables":
                 if (
                     results.problem.number_of_variables is None
                 ):  # CPLEX 11.2 and subsequent versions have two Variables sections in the log file output.
                     results.problem.number_of_variables = int(tokens[2])
+                if len(tokens) >= 5 and "Nneg" in tokens[3]:
+                    results.problem.number_of_continuous_variables = int(tokens[4].rstrip(','))
+                if len(tokens) >= 7 and "Binary" in tokens[5]:
+                    results.problem.number_of_binary_variables = int(tokens[6].rstrip('],'))
             # In CPLEX 11 (and presumably before), there was only a single line output to
             # indicate the constraint count, e.g., "Linear constraints : 16 [Less: 7, Greater: 6, Equal: 3]".
             # In CPLEX 11.2 (or somewhere in between 11 and 11.2 - I haven't bothered to track it down
@@ -546,9 +594,9 @@ class CPLEXSHELL(ILMLicensedSystemCallSolver):
                     results.problem.number_of_nonzeros is None
                 ):  # CPLEX 11.2 and subsequent has two Nonzeros sections.
                     results.problem.number_of_nonzeros = int(tokens[2])
-            elif len(tokens) >= 5 and tokens[4] == "MINIMIZE":
+            elif (len(tokens) >= 5 and tokens[4] == "MINIMIZE") or (len(tokens) >= 4 and tokens[3] == 'Minimize'):
                 results.problem.sense = minimize
-            elif len(tokens) >= 5 and tokens[4] == "MAXIMIZE":
+            elif (len(tokens) >= 5 and tokens[4] == "MAXIMIZE") or (len(tokens) >= 4 and tokens[3] == 'Maximize'):
                 results.problem.sense = maximize
             elif (
                 len(tokens) >= 4
@@ -559,6 +607,8 @@ class CPLEXSHELL(ILMLicensedSystemCallSolver):
                 # technically, I'm not sure if this is CPLEX user time or user+system - CPLEX doesn't appear
                 # to differentiate, and I'm not sure we can always provide a break-down.
                 results.solver.user_time = float(tokens[3])
+            elif len(tokens) >= 4 and tokens[0] == "Deterministic" and tokens[1] == "time" and tokens[2] == "=":
+                results.solver.deterministic_time = float(tokens[3])
             elif (
                 len(tokens) >= 4
                 and tokens[0] == "Primal"
@@ -599,14 +649,16 @@ class CPLEXSHELL(ILMLicensedSystemCallSolver):
                     results.solver.status = SolverStatus.ok
                 results.solver.termination_condition = TerminationCondition.infeasible
                 results.solver.termination_message = ' '.join(tokens)
-            elif (
-                len(tokens) >= 10
-                and tokens[0] == "MIP"
-                and tokens[2] == "Time"
-                and tokens[3] == "limit"
-                and tokens[6] == "feasible:"
-            ):
-                # handle processing when the time limit has been exceeded, and we have a feasible solution.
+            elif len(tokens) >= 10 and tokens[0] == "MIP" and tokens[3] == "limit" and tokens[6] == "feasible:":
+                if tokens[2] == "Time":
+                    # handle processing when the time limit has been exceeded, and we have a feasible solution.
+                    results.solver.termination_condition = TerminationCondition.maxTimeLimit
+                elif tokens[2] == "Solution":
+                    results.solver.termination_condition = TerminationCondition.maxEvaluations
+                results.solver.status = SolverStatus.ok
+                results.solver.termination_message = ' '.join(tokens)
+            elif len(tokens) >= 10 and tokens[0] == "MIP" and tokens[2] == "Deterministic" and tokens[3] == "time" and tokens[4] == "limit" and tokens[7] == "feasible:":
+                # handle processing when the deterministic time limit has been exceeded, and we have a feasible solution.
                 results.solver.status = SolverStatus.ok
                 results.solver.termination_condition = TerminationCondition.maxTimeLimit
                 results.solver.termination_message = ' '.join(tokens)
@@ -684,6 +736,13 @@ class CPLEXSHELL(ILMLicensedSystemCallSolver):
                 # CPLEX's output.
                 results.solver.termination_condition = TerminationCondition.unbounded
                 results.solver.termination_message = ' '.join(tokens)
+            elif len(tokens) >= 6 and tokens[0] == "MIP" and tuple(tokens[5:]) == ('no', 'integer', 'solution.'):
+                results.solver.termination_condition = TerminationCondition.noSolution
+                results.solver.termination_message = ' '.join(tokens)
+            elif len(tokens) >= 9 and tokens[0] == "MIP" and tokens[1] == "start" and tokens[7] == "objective":
+                results.solver.warm_start_objective_value = float(tokens[8].rstrip('.'))
+            elif len(tokens) >= 5 and tokens[0:2] == ["Solution", "pool:"] and tokens[3] in ["solution", "solutions"] and tokens[4] == "saved.":
+                results.solver.n_solutions_found = int(tokens[2])
 
         try:
             if isinstance(results.solver.termination_message, str):
@@ -996,7 +1055,7 @@ class CPLEXSHELL(ILMLicensedSystemCallSolver):
                 TerminationCondition.globallyOptimal,
                 TerminationCondition.locallyOptimal,
                 TerminationCondition.optimal,
-                # TerminationCondition.maxEvaluations,
+                TerminationCondition.maxEvaluations,
                 TerminationCondition.other,
             ]:
                 results.solution.insert(soln)
