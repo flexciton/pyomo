@@ -33,7 +33,14 @@ from pyomo.core import (
     Suffix,
 )
 from pyomo.core import NonNegativeReals
-from pyomo.opt import ProblemFormat, convert_problem, SolverFactory, BranchDirection, SolverStatus, TerminationCondition
+from pyomo.opt import (
+    ProblemFormat,
+    convert_problem,
+    SolverFactory,
+    BranchDirection,
+    SolverStatus,
+    TerminationCondition,
+)
 from pyomo.solvers.plugins.solvers.CPLEX import (
     CPLEXSHELL,
     MockCPLEX,
@@ -386,7 +393,9 @@ class TestCPLEXSHELLWarmstartFile(unittest.TestCase):
     def test_mst_file_all_vars(self):
         model = self._get_mock_model()
         with SolverFactory("_mock_cplex") as opt:
-            opt._presolve(model, keepfiles=True, warmstart=True, integer_only_warmstarts=False)
+            opt._presolve(
+                model, keepfiles=True, warmstart=True, integer_only_warmstarts=False
+            )
             with open(opt._warm_start_file_name, "r") as warmstart_file:
                 file_str = warmstart_file.read()
                 assert 'value="1.500000' in file_str
@@ -395,7 +404,9 @@ class TestCPLEXSHELLWarmstartFile(unittest.TestCase):
     def test_mst_file_integer_vars_only(self):
         model = self._get_mock_model()
         with SolverFactory("_mock_cplex") as opt:
-            opt._presolve(model, keepfiles=True, warmstart=True, integer_only_warmstarts=True)
+            opt._presolve(
+                model, keepfiles=True, warmstart=True, integer_only_warmstarts=True
+            )
             with open(opt._warm_start_file_name, "r") as warmstart_file:
                 file_str = warmstart_file.read()
                 assert 'value="1.500000' not in file_str
@@ -405,7 +416,9 @@ class TestCPLEXSHELLWarmstartFile(unittest.TestCase):
         model = self._get_mock_model()
         model.Y.value = 0.999999
         with SolverFactory("_mock_cplex") as opt:
-            opt._presolve(model, keepfiles=True, warmstart=True, integer_only_warmstarts=True)
+            opt._presolve(
+                model, keepfiles=True, warmstart=True, integer_only_warmstarts=True
+            )
             with open(opt._warm_start_file_name, "r") as warmstart_file:
                 file_str = warmstart_file.read()
                 assert 'value="0.999999' not in file_str
@@ -416,9 +429,7 @@ class TestCPLEXSHELLProcessLogfile(unittest.TestCase):
     def setUp(self):
         TempfileManager.push()
         solver = MockCPLEX()
-        solver._log_file = TempfileManager.create_tempfile(
-            suffix=".log"
-        )
+        solver._log_file = TempfileManager.create_tempfile(suffix=".log")
         self.solver = solver
 
     def tearDown(self):
@@ -490,9 +501,7 @@ CPLEX>"""
         self.assertEqual(
             results.solver.termination_condition, TerminationCondition.infeasible
         )
-        self.assertEqual(
-            results.solver.termination_message, "Presolve - Infeasible."
-        )
+        self.assertEqual(results.solver.termination_message, "Presolve - Infeasible.")
         self.assertEqual(results.solver.return_code, 1217)
 
     def test_log_file_shows_max_time_limit_exceeded_with_feasible_solution(self):
@@ -514,7 +523,9 @@ CPLEX>"""
         )
         self.assertEqual(results.solver.deterministic_time, 100.00)
 
-    def test_log_file_shows_max_deterministic_time_limit_exceeded_with_feasible_solution(self):
+    def test_log_file_shows_max_deterministic_time_limit_exceeded_with_feasible_solution(
+        self,
+    ):
         log_file_text = """
 MIP - Deterministic time limit exceeded, integer feasible:  Objective =  0.0000000000e+00
 Current MIP best bound =  0.0000000000e+00 (gap = 10.0, 10.00%)
@@ -672,9 +683,12 @@ class TestCplexVersion:
             assert cplex.version() == (20, 1, 0, 0)
 
     def test_it_uses_subprocess_when_env_var_is_none(self):
-        with self.temp_cplex_env_var_value(None), unittest.mock.patch(
-            "pyomo.solvers.plugins.solvers.CPLEX.subprocess"
-        ) as mock_subprocess:
+        with (
+            self.temp_cplex_env_var_value(None),
+            unittest.mock.patch(
+                "pyomo.solvers.plugins.solvers.CPLEX.subprocess"
+            ) as mock_subprocess,
+        ):
             mock_subprocess.run.return_value = Mock(stdout='20.0.0')
             cplex = MockCPLEX()
             assert cplex.version() == (20, 0, 0, 0)
@@ -687,9 +701,12 @@ class TestCplexVersion:
             )
 
     def test_it_uses_subprocess_when_env_var_is_invalid(self):
-        with self.temp_cplex_env_var_value("invalid_version"), unittest.mock.patch(
-            "pyomo.solvers.plugins.solvers.CPLEX.subprocess"
-        ) as mock_subprocess:
+        with (
+            self.temp_cplex_env_var_value("invalid_version"),
+            unittest.mock.patch(
+                "pyomo.solvers.plugins.solvers.CPLEX.subprocess"
+            ) as mock_subprocess,
+        ):
             mock_subprocess.run.return_value = Mock(stdout='20.0.0')
             cplex = MockCPLEX()
             assert cplex.version() == (20, 0, 0, 0)

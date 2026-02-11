@@ -73,23 +73,17 @@ class CPLEXDirectTests(unittest.TestCase):
 
         model.Z = Var(model.LINKS, domain=Binary)
         model.FLOW = Var(
-            model.POINTS_LESS_FIRST,
-            domain=NonNegativeReals,
-            bounds=(0, model.N - 1),
+            model.POINTS_LESS_FIRST, domain=NonNegativeReals, bounds=(0, model.N - 1)
         )
 
         model.InDegrees = Constraint(
             model.POINTS,
-            rule=lambda m, i: sum(
-                model.Z[i, j] for (i_, j) in model.LINKS if i == i_
-            )
+            rule=lambda m, i: sum(model.Z[i, j] for (i_, j) in model.LINKS if i == i_)
             == 1,
         )
         model.OutDegrees = Constraint(
             model.POINTS,
-            rule=lambda m, i: sum(
-                model.Z[j, i] for (j, i_) in model.LINKS if i == i_
-            )
+            rule=lambda m, i: sum(model.Z[j, i] for (j, i_) in model.LINKS if i == i_)
             == 1,
         )
 
@@ -340,9 +334,7 @@ class CPLEXDirectTests(unittest.TestCase):
                 results.solver.termination_condition,
                 TerminationCondition.maxEvaluations,
             )
-            self.assertEqual(
-                model.solutions[0].status, SolutionStatus.stoppedByLimit
-            )
+            self.assertEqual(model.solutions[0].status, SolutionStatus.stoppedByLimit)
 
     @unittest.skipIf(
         not cplexpy_available, "The 'cplex' python bindings are not available"
@@ -361,16 +353,12 @@ class CPLEXDirectTests(unittest.TestCase):
 
             self.assertEqual(results.solver.status, SolverStatus.aborted)
             self.assertEqual(
-                results.solver.termination_condition,
-                TerminationCondition.maxTimeLimit,
+                results.solver.termination_condition, TerminationCondition.maxTimeLimit
             )
             self.assertEqual(
-                results.solver.termination_message,
-                'deterministic time limit exceeded',
+                results.solver.termination_message, 'deterministic time limit exceeded'
             )
-            self.assertEqual(
-                model.solutions[0].status, SolutionStatus.stoppedByLimit
-            )
+            self.assertEqual(model.solutions[0].status, SolutionStatus.stoppedByLimit)
             self.assertTrue(9 <= results.solver.deterministic_time <= 11)
 
 
