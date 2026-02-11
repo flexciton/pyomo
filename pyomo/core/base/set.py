@@ -1582,14 +1582,14 @@ class FiniteSetData(_FiniteSetMixin, SetData):
 
     def _cb_raw_dimen_verifier(self, dimen, val_iter):
         for value in val_iter:
-            if isinstance(value, Sequence):
+            if isinstance(value, tuple):
                 if dimen == len(value):
                     yield value
                     continue
             elif dimen == 1:
                 yield value
                 continue
-            _d = len(value) if isinstance(value, Sequence) else 1
+            _d = len(value) if isinstance(value, tuple) else 1
             if dimen is UnknownSetDimen:
                 # The first thing added to a Set with unknown dimension
                 # sets its dimension
